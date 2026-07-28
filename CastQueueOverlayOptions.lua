@@ -203,6 +203,38 @@ local function RegionName(region)
     return nil
 end
 
+-- Size in UIParent-space. A region's own width/height are in ITS coordinate
+-- system, so they have to be scaled before being compared to anything else.
+local function NormalisedSize(region)
+    local ok, w, h = pcall(function() return region:GetWidth(), region:GetHeight() end)
+    if not ok or not w or not h or w <= 0 or h <= 0 then return nil end
+
+    local scale = 1
+    if region.GetEffectiveScale then
+        local ok2, s = pcall(region.GetEffectiveScale, region)
+        local parentScale = UIParent:GetEffectiveScale()
+        if ok2 and s and parentScale and parentScale > 0 then
+            scale = s / parentScale
+        end
+    end
+    return w * scale, h * scale
+end
+
+-- Full-screen overlays are never what someone is pointing AT, but they sit on
+-- top of everything and win any "topmost" contest. Concrete case:
+-- EllesmereUIQoL's cursor-trail parent ECL_TrailContainer is SetAllPoints(UIParent)
+-- at TOOLTIP strata, frame level 9998 (EllesmereUIQoL_Cursor.lua:148-153), so it
+-- was returned for every single hover.
+local SCREEN_COVER_RATIO = 0.95
+
+local function CoversScreen(region)
+    local w, h = NormalisedSize(region)
+    if not w then return false end
+    local pw, ph = UIParent:GetWidth(), UIParent:GetHeight()
+    if not pw or not ph or pw <= 0 or ph <= 0 then return false end
+    return w >= pw * SCREEN_COVER_RATIO and h >= ph * SCREEN_COVER_RATIO
+end
+
 local function FindFrameUnderCursor()
     -- GetMouseFoci() was the wrong primitive and is why the picker kept landing
     -- on WorldFrame. It only reports regions with mouse input ENABLED; cast bars
@@ -217,26 +249,45 @@ local function FindFrameUnderCursor()
 
     -- Search the stack itself for something NAMED rather than taking the topmost
     -- region and walking up its parents. Most regions under the cursor are
-    -- anonymous textures and inner bars; the old parent-walk escaped straight to
+    -- anonymous textures and inner bars; a parent-walk escapes straight to
     -- UIParent for nearly all of them. A sibling in the stack is a far better
     -- answer than a distant ancestor, and it can only ever return something the
     -- cursor is genuinely over.
+    --
+    -- Of those candidates, take the SMALLEST rather than the topmost. Stack order
+    -- is confirmed topmost-first, but topmost is the wrong question: a
+    -- screen-covering overlay is always topmost and never the intended target,
+    -- while the thing you are actually pointing at is the most specific region
+    -- containing the cursor. Smallest-area is also independent of stack order, so
+    -- it cannot silently rot if that ordering ever changes.
+    local best, bestName, bestArea
     for _, region in ipairs(stack) do
-        if not IsUselessPick(region) then
+        if not IsUselessPick(region) and not CoversScreen(region) then
             local name = RegionName(region)
-            if name then return region, name end
+            if name then
+                local w, h = NormalisedSize(region)
+                if w then
+                    local area = w * h
+                    if not bestArea or area < bestArea then
+                        best, bestName, bestArea = region, name, area
+                    end
+                end
+            end
         end
     end
+    if best then return best, bestName end
 
     -- Nothing in the stack is named. Fall back to a bounded parent walk from the
     -- topmost usable region, stopping BEFORE the catch-alls so a miss reports as
     -- a miss instead of silently selecting UIParent.
     for _, region in ipairs(stack) do
-        if not IsUselessPick(region) then
+        if not IsUselessPick(region) and not CoversScreen(region) then
             local node = region
             while node and not IsUselessPick(node) do
                 local name = RegionName(node)
-                if name then return node, name end
+                -- Same exclusion on the way up: a screen-covering ancestor is no
+                -- more useful than a screen-covering sibling.
+                if name and not CoversScreen(node) then return node, name end
                 local ok, parent = pcall(node.GetParent, node)
                 node = ok and parent or nil
             end
