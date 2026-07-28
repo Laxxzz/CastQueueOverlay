@@ -183,6 +183,71 @@ function S.EditBox(parent, width, height)
     return holder, e
 end
 
+-- Tab button. Deliberately styled to match a section heading rather than a
+-- button: same font object and same muted colour as S.Heading, with a border in
+-- that same colour. The active tab is shown by a filled background only, so the
+-- text and outline colours stay identical across all three.
+function S.Tab(parent, text)
+    local b = CreateFrame("Button", nil, parent)
+
+    local bg = b:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints(b)
+    bg:SetColorTexture(Unpack(S.color.canvas))
+
+    S.Border(b, S.color.textMuted)
+
+    local label = b:CreateFontString(nil, "OVERLAY")
+    label:SetFontObject(S.fontHeading)
+    label:SetPoint("CENTER")
+    label:SetText(text)
+
+    b:SetSize(label:GetStringWidth() + 24, 22)
+
+    local active = false
+    function b:SetActive(on)
+        active = on
+        bg:SetColorTexture(Unpack(on and S.color.surfaceHover or S.color.canvas))
+    end
+    function b:IsActive() return active end
+
+    b:SetScript("OnEnter", function()
+        if not active then bg:SetColorTexture(Unpack(S.color.surface)) end
+    end)
+    b:SetScript("OnLeave", function()
+        bg:SetColorTexture(Unpack(active and S.color.surfaceHover or S.color.canvas))
+    end)
+
+    return b
+end
+
+-- Flat checkbox: hairline square, accent fill when checked. No tick glyph - at
+-- this size a filled square reads faster and needs no art.
+function S.Checkbox(parent, size)
+    local b = CreateFrame("Button", nil, parent)
+    b:SetSize(size, size)
+
+    S.Fill(b, S.color.surface)
+    local border = S.Border(b, S.color.border)
+
+    local fill = b:CreateTexture(nil, "ARTWORK")
+    fill:SetPoint("TOPLEFT", 3, -3)
+    fill:SetPoint("BOTTOMRIGHT", -3, 3)
+    fill:SetColorTexture(Unpack(S.color.accent))
+    fill:Hide()
+
+    local checked = false
+    function b:SetChecked(on)
+        checked = on and true or false
+        if checked then fill:Show() else fill:Hide() end
+    end
+    function b:GetChecked() return checked end
+
+    b:SetScript("OnEnter", function() border:SetColor(S.color.borderBright) end)
+    b:SetScript("OnLeave", function() border:SetColor(S.color.border) end)
+
+    return b
+end
+
 -- Section heading: small muted label with a hairline rule running to the right,
 -- which is what gives the window its structure without boxing everything in.
 function S.Heading(parent, text)

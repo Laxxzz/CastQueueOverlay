@@ -8,9 +8,24 @@ local ADDON_NAME = ...
 -- ---------------------------------------------------------------------
 -- Saved settings
 -- ---------------------------------------------------------------------
+-- Three independent overlays, each a time value painted onto the trailing end of
+-- the bar. They are drawn stacked, so any combination can be on at once.
 local defaults = {
-    r = 1, g = 1, b = 1, a = 0.35,
     frameName = nil, -- nil/empty = use the default Blizzard player cast bar
+    overlays = {
+        queue   = { enabled = true,  r = 1.00, g = 1.00, b = 1.00, a = 0.35 },
+        latency = { enabled = false, r = 0.35, g = 0.72, b = 1.00, a = 0.35 },
+        custom  = { enabled = false, r = 0.85, g = 0.47, b = 0.34, a = 0.35, valueMS = 200 },
+    },
+}
+
+-- Fixed iteration order. `pairs` over the overlays table would vary run to run,
+-- and these are drawn in a computed z-order that has to be reproducible.
+addon.OVERLAY_KEYS = { "queue", "latency", "custom" }
+addon.OVERLAY_LABELS = {
+    queue   = "SpellQueueWindow",
+    latency = "Latency",
+    custom  = "Custom",
 }
 
 -- `DB = DB or {}` alone only covers a first run. A user upgrading from a build
@@ -23,13 +38,39 @@ local defaults = {
 -- wholesale - the merge is silently discarded and every key the saved table
 -- lacks stays nil. Every read below (ResolveCastBar, ApplyOverlay's colour) runs
 -- later than this callback, so nothing races it.
-EventUtil.ContinueOnAddOnLoaded(ADDON_NAME, function()
-    CastQueueOverlayDB = CastQueueOverlayDB or {}
-    for k, v in pairs(defaults) do
-        if CastQueueOverlayDB[k] == nil then
-            CastQueueOverlayDB[k] = v
+local function ApplyDefaults(db, src)
+    for k, v in pairs(src) do
+        if db[k] == nil then
+            db[k] = (type(v) == "table") and CopyTable(v) or v
+        elseif type(v) == "table" and type(db[k]) == "table" then
+            ApplyDefaults(db[k], v) -- recurse, so nested keys are filled on upgrade
         end
     end
+    return db
+end
+
+EventUtil.ContinueOnAddOnLoaded(ADDON_NAME, function()
+    CastQueueOverlayDB = CastQueueOverlayDB or {}
+
+    -- Migrate the pre-multi-overlay schema, where the single overlay's colour
+    -- lived in flat r/g/b/a keys at the top level. Runs before ApplyDefaults so
+    -- the user's existing colour becomes the queue overlay's colour rather than
+    -- being replaced by the default white.
+    if CastQueueOverlayDB.r ~= nil and CastQueueOverlayDB.overlays == nil then
+        CastQueueOverlayDB.overlays = {
+            queue = {
+                enabled = true,
+                r = CastQueueOverlayDB.r,
+                g = CastQueueOverlayDB.g,
+                b = CastQueueOverlayDB.b,
+                a = CastQueueOverlayDB.a,
+            },
+        }
+        CastQueueOverlayDB.r, CastQueueOverlayDB.g = nil, nil
+        CastQueueOverlayDB.b, CastQueueOverlayDB.a = nil, nil
+    end
+
+    ApplyDefaults(CastQueueOverlayDB, defaults)
 end)
 
 -- Shared namespace so the options panel can drive the overlay without
@@ -38,7 +79,8 @@ CastQueueOverlay = CastQueueOverlay or {}
 local addon = CastQueueOverlay
 addon.DEFAULT_FRAME_NAME = "PlayerCastingBarFrame"
 
-local overlay
+local overlays = {}   -- key -> texture
+local overlay          -- the queue texture; kept so EnsureOverlay can report success
 local castBar
 local activeStartMS, activeEndMS
 local hookedBars = {}   -- frames whose OnSizeChanged we have already hooked
@@ -72,13 +114,44 @@ local function ResolveCastBar()
 end
 
 local function DestroyOverlay()
-    if overlay then
-        overlay:Hide()
-        overlay:ClearAllPoints()
-        overlay:SetParent(UIParent)
-        overlay = nil
+    for key, tex in pairs(overlays) do
+        tex:Hide()
+        tex:ClearAllPoints()
+        tex:SetParent(UIParent)
+        overlays[key] = nil
+    end
+    overlay = nil
+end
+
+local function HideAllOverlays()
+    for _, tex in pairs(overlays) do
+        tex:Hide()
     end
 end
+
+-- Milliseconds represented by each overlay. All three are ms, matching
+-- startTimeMs/endTimeMs, so the ratio in ApplyOverlay stays unit-free.
+local function OverlayValueMS(key)
+    if key == "queue" then
+        -- GetCVar returns a STRING, always.
+        return tonumber(GetCVar("SpellQueueWindow")) or 0
+
+    elseif key == "latency" then
+        -- GetNetStats returns in, out, latencyHome, latencyWorld
+        -- (PerformanceBar.lua:60). Home is the realm connection and is the right
+        -- number for spell queueing; world is the fallback when home reads 0,
+        -- which happens briefly after login and on some connection changes.
+        local _, _, latencyHome, latencyWorld = GetNetStats()
+        latencyHome = tonumber(latencyHome) or 0
+        if latencyHome > 0 then return latencyHome end
+        return tonumber(latencyWorld) or 0
+
+    elseif key == "custom" then
+        return tonumber(CastQueueOverlayDB.overlays.custom.valueMS) or 0
+    end
+    return 0
+end
+addon.OverlayValueMS = OverlayValueMS
 
 local function EnsureOverlay()
     local want = ResolveCastBar()
@@ -97,9 +170,13 @@ local function EnsureOverlay()
 
     if overlay then return overlay end
 
-    overlay = castBar:CreateTexture(nil, "OVERLAY")
-    overlay:SetColorTexture(1, 1, 1, 1)
-    overlay:Hide()
+    for _, key in ipairs(addon.OVERLAY_KEYS) do
+        local tex = castBar:CreateTexture(nil, "OVERLAY")
+        tex:SetColorTexture(1, 1, 1, 1)
+        tex:Hide()
+        overlays[key] = tex
+    end
+    overlay = overlays.queue
 
     -- Keep the overlay's width correct if the bar itself is resized (e.g. via
     -- Edit Mode). Hooks can never be removed, so track which bars we have already
@@ -108,7 +185,10 @@ local function EnsureOverlay()
     if not hookedBars[castBar] then
         hookedBars[castBar] = true
         castBar:HookScript("OnSizeChanged", function()
-            if overlay and overlay:IsShown() then
+            -- Keyed off a cast being in progress, not off one texture being
+            -- visible: the queue overlay can be disabled while latency or custom
+            -- are still drawn, and those would then never track a resize.
+            if activeStartMS then
                 addon.Refresh()
             end
         end)
@@ -126,37 +206,57 @@ local function ApplyOverlay(startMS, endMS)
 
     if not startMS or not endMS then
         activeStartMS, activeEndMS = nil, nil
-        overlay:Hide()
+        HideAllOverlays()
         return
     end
 
     local castDuration = endMS - startMS
     if castDuration <= 0 then
-        overlay:Hide()
+        HideAllOverlays()
         return
     end
 
     activeStartMS, activeEndMS = startMS, endMS
 
-    local queueWindowMS = tonumber(GetCVar("SpellQueueWindow")) or 0
-    local pct = queueWindowMS / castDuration
-    if pct <= 0 then
-        overlay:Hide()
-        return
-    end
-    if pct > 1 then pct = 1 end
-
     local barWidth = castBar:GetWidth()
 
-    overlay:ClearAllPoints()
-    overlay:SetPoint("TOPRIGHT", castBar, "TOPRIGHT", 0, 0)
-    overlay:SetPoint("BOTTOMRIGHT", castBar, "BOTTOMRIGHT", 0, 0)
-    overlay:SetWidth(barWidth * pct)
+    -- Collect what is actually going to be drawn, so the z-order can be decided
+    -- from the real set rather than assumed from the config.
+    local visible = {}
+    for _, key in ipairs(addon.OVERLAY_KEYS) do
+        local cfg = CastQueueOverlayDB.overlays[key]
+        local tex = overlays[key]
+        local valueMS = cfg.enabled and OverlayValueMS(key) or 0
+        local pct = valueMS / castDuration
 
-    local c = CastQueueOverlayDB
-    overlay:SetColorTexture(c.r, c.g, c.b, c.a)
+        if not cfg.enabled or pct <= 0 then
+            tex:Hide()
+        else
+            if pct > 1 then pct = 1 end
+            visible[#visible + 1] = { key = key, tex = tex, cfg = cfg, pct = pct }
+        end
+    end
 
-    overlay:Show()
+    -- All three share the same right edge, so a wider one drawn on top would
+    -- completely bury a narrower one. Sort widest first and give the narrower
+    -- overlays higher sublevels, so every enabled overlay stays visible and the
+    -- stack reads as bands from the end of the bar inward.
+    table.sort(visible, function(a, b)
+        if a.pct ~= b.pct then return a.pct > b.pct end
+        return a.key < b.key -- total order; equal values must not shuffle per frame
+    end)
+
+    for i, entry in ipairs(visible) do
+        local tex, cfg = entry.tex, entry.cfg
+        tex:ClearAllPoints()
+        tex:SetPoint("TOPRIGHT", castBar, "TOPRIGHT", 0, 0)
+        tex:SetPoint("BOTTOMRIGHT", castBar, "BOTTOMRIGHT", 0, 0)
+        tex:SetWidth(barWidth * entry.pct)
+        tex:SetColorTexture(cfg.r, cfg.g, cfg.b, cfg.a)
+        -- Sublevel accepts -8..7; three overlays never exhaust that.
+        tex:SetDrawLayer("OVERLAY", i)
+        tex:Show()
+    end
 end
 
 -- Public: recompute using whatever cast is currently tracked (used after
@@ -209,7 +309,7 @@ end
 
 local function HideOverlay()
     activeStartMS, activeEndMS = nil, nil
-    if overlay then overlay:Hide() end
+    HideAllOverlays()
 end
 
 -- Public: switch which frame the overlay is attached to. `name` must be

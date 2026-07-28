@@ -25,7 +25,7 @@ local S = addon.Style
 -- ---------------------------------------------------------------------
 -- Height leaves room for statusText to wrap to two lines without colliding with
 -- the hint pinned to the bottom edge.
-local WINDOW_W, WINDOW_H = 460, 368
+local WINDOW_W, WINDOW_H = 460, 404
 local PAD = 20
 
 local win = CreateFrame("Frame", "CastQueueOverlayOptionsFrame", UIParent)
@@ -79,79 +79,214 @@ tinsert(UISpecialFrames, "CastQueueOverlayOptionsFrame")
 -- ---------------------------------------------------------------------
 -- Overlay colour
 -- ---------------------------------------------------------------------
-local colorHeading = S.Heading(win, "OVERLAY COLOUR")
-colorHeading:SetPoint("TOPLEFT", PAD, -60)
-colorHeading.Rule:SetPoint("RIGHT", win, "RIGHT", -PAD, 0)
+-- One tab per overlay, each with its own colour, opacity and on/off. The tabs
+-- sit where the OVERLAY COLOUR heading used to, and deliberately carry the
+-- heading's font and colour so the row still reads as a section label.
+local TAB_KEYS = { "queue", "latency", "custom" }
+local TAB_TEXT = {
+    queue   = "SpellQueueWindow",
+    latency = "Latency",
+    custom  = "Custom",
+}
 
-local swatchHolder = S.Inset(win)
-swatchHolder:SetSize(52, 26)
-swatchHolder:SetPoint("TOPLEFT", colorHeading, "BOTTOMLEFT", 0, -12)
+local tabs = {}
+local pages = {}
+local activeTab
 
-local swatchTex = swatchHolder:CreateTexture(nil, "ARTWORK")
-swatchTex:SetPoint("TOPLEFT", 3, -3)
-swatchTex:SetPoint("BOTTOMRIGHT", -3, 3)
-swatchTex:SetColorTexture(1, 1, 1, 1)
+local body = S.Inset(win)
+-- Sized for the tallest page. Only `custom` has a second row, and a body that
+-- resized per tab would make the whole window jump as you switch.
+body:SetSize(WINDOW_W - PAD * 2, 82)
 
-local swatchBtn = CreateFrame("Button", nil, swatchHolder)
-swatchBtn:SetAllPoints(swatchHolder)
-
-local colorValue = win:CreateFontString(nil, "OVERLAY")
-colorValue:SetFontObject(S.fontSmall)
-colorValue:SetPoint("LEFT", swatchHolder, "RIGHT", 12, 0)
-
-local function UpdateSwatch()
-    local c = CastQueueOverlayDB
-    swatchTex:SetColorTexture(c.r, c.g, c.b, 1)
-    colorValue:SetText(("#%02X%02X%02X   %d%% opacity"):format(
-        math.floor(c.r * 255 + 0.5),
-        math.floor(c.g * 255 + 0.5),
-        math.floor(c.b * 255 + 0.5),
-        math.floor((c.a or 0) * 100 + 0.5)))
+local function CfgFor(key)
+    return CastQueueOverlayDB.overlays[key]
 end
 
-local function OnColorChanged()
-    local r, g, b = ColorPickerFrame:GetColorRGB()
-    local a = ColorPickerFrame:GetColorAlpha()
-    CastQueueOverlayDB.r, CastQueueOverlayDB.g, CastQueueOverlayDB.b, CastQueueOverlayDB.a = r, g, b, a
-    UpdateSwatch()
-    addon.Refresh()
-end
+-- Builds the body content for one overlay. Every page is identical except that
+-- `custom` gains a value field, since its milliseconds are not read from the game.
+local function BuildPage(key)
+    local page = CreateFrame("Frame", nil, body)
+    page:SetAllPoints(body)
+    page:Hide()
 
-swatchBtn:SetScript("OnClick", function()
-    local c = CastQueueOverlayDB
-    -- Snapshot by value. `c` is the same table as CastQueueOverlayDB, so it is
-    -- mutated live by swatchFunc while the picker is open and cannot serve as a
-    -- restore point.
-    local prevR, prevG, prevB, prevA = c.r, c.g, c.b, c.a
+    local swatchHolder = S.Inset(page)
+    swatchHolder:SetSize(52, 26)
+    swatchHolder:SetPoint("TOPLEFT", 10, -10)
 
-    ColorPickerFrame:SetupColorPickerAndShow({
-        swatchFunc = OnColorChanged,
-        opacityFunc = OnColorChanged,
-        cancelFunc = function(prev)
-            -- ColorPickerFrame builds this as {r=, g=, b=, a=} - alpha is passed
-            -- IN as `opacity` but comes BACK as `a`.
-            CastQueueOverlayDB.r = (prev and prev.r) or prevR
-            CastQueueOverlayDB.g = (prev and prev.g) or prevG
-            CastQueueOverlayDB.b = (prev and prev.b) or prevB
-            CastQueueOverlayDB.a = (prev and prev.a) or prevA
-            UpdateSwatch()
+    local swatchTex = swatchHolder:CreateTexture(nil, "ARTWORK")
+    swatchTex:SetPoint("TOPLEFT", 3, -3)
+    swatchTex:SetPoint("BOTTOMRIGHT", -3, 3)
+    swatchTex:SetColorTexture(1, 1, 1, 1)
+
+    local swatchBtn = CreateFrame("Button", nil, swatchHolder)
+    swatchBtn:SetAllPoints(swatchHolder)
+
+    local colorValue = page:CreateFontString(nil, "OVERLAY")
+    colorValue:SetFontObject(S.fontSmall)
+    colorValue:SetPoint("LEFT", swatchHolder, "RIGHT", 12, 0)
+
+    -- One anchor only. RIGHT plus TOP would over-constrain a FontString - each
+    -- supplies both an x and a y - and stretch it. -23 is the vertical centre of
+    -- the swatch row (10 inset + half of 26).
+    local enableLabel = page:CreateFontString(nil, "OVERLAY")
+    enableLabel:SetFontObject(S.fontSmall)
+    enableLabel:SetText("Enabled")
+    enableLabel:SetPoint("RIGHT", page, "TOPRIGHT", -12, -23)
+
+    local check = S.Checkbox(page, 18)
+    check:SetPoint("RIGHT", enableLabel, "LEFT", -8, 0)
+
+    -- Custom is the only overlay whose value the player supplies.
+    local msHolder, msEdit
+    if key == "custom" then
+        local msLabel = page:CreateFontString(nil, "OVERLAY")
+        msLabel:SetFontObject(S.fontSmall)
+        msLabel:SetText("Value")
+        msLabel:SetPoint("TOPLEFT", swatchHolder, "BOTTOMLEFT", 0, -12)
+
+        msHolder, msEdit = S.EditBox(page, 80, 24)
+        msHolder:SetPoint("LEFT", msLabel, "RIGHT", 10, 0)
+        msEdit:SetNumeric(true)
+
+        local msUnit = page:CreateFontString(nil, "OVERLAY")
+        msUnit:SetFontObject(S.fontHint)
+        msUnit:SetText("ms")
+        msUnit:SetPoint("LEFT", msHolder, "RIGHT", 8, 0)
+    end
+
+    function page:Refresh()
+        local c = CfgFor(key)
+        swatchTex:SetColorTexture(c.r, c.g, c.b, 1)
+
+        local valueText = ""
+        if key ~= "custom" then
+            -- Show what this overlay currently resolves to, so "Latency" is not
+            -- an abstraction the player has to take on trust.
+            local ms = addon.OverlayValueMS and addon.OverlayValueMS(key) or 0
+            valueText = ("   %dms"):format(math.floor(ms + 0.5))
+        end
+
+        colorValue:SetText(("#%02X%02X%02X   %d%% opacity%s"):format(
+            math.floor(c.r * 255 + 0.5),
+            math.floor(c.g * 255 + 0.5),
+            math.floor(c.b * 255 + 0.5),
+            math.floor((c.a or 0) * 100 + 0.5),
+            valueText))
+
+        check:SetChecked(c.enabled)
+        if msEdit and not msEdit:HasFocus() then
+            msEdit:SetText(tostring(c.valueMS or 0))
+        end
+    end
+
+    check:SetScript("OnClick", function()
+        local c = CfgFor(key)
+        c.enabled = not c.enabled
+        page:Refresh()
+        addon.Refresh()
+    end)
+
+    if msEdit then
+        local function CommitMS(self)
+            local c = CfgFor(key)
+            c.valueMS = math.max(0, tonumber(self:GetText()) or 0)
+            self:ClearFocus()
+            page:Refresh()
             addon.Refresh()
-        end,
-        hasOpacity = 1,
-        opacity = c.a,
-        r = c.r, g = c.g, b = c.b,
-    })
-end)
+        end
+        msEdit:SetScript("OnEnterPressed", CommitMS)
+        msEdit:SetScript("OnEditFocusLost", CommitMS)
+        msEdit:SetScript("OnEscapePressed", function(self)
+            self:ClearFocus()
+            page:Refresh()
+        end)
+    end
+
+    local function OnColorChanged()
+        local c = CfgFor(key)
+        c.r, c.g, c.b = ColorPickerFrame:GetColorRGB()
+        c.a = ColorPickerFrame:GetColorAlpha()
+        page:Refresh()
+        addon.Refresh()
+    end
+
+    swatchBtn:SetScript("OnClick", function()
+        local c = CfgFor(key)
+        -- Snapshot by value. `c` is a live reference into the saved variables and
+        -- is mutated by swatchFunc while the picker is open, so it cannot serve
+        -- as its own restore point.
+        local prevR, prevG, prevB, prevA = c.r, c.g, c.b, c.a
+
+        ColorPickerFrame:SetupColorPickerAndShow({
+            swatchFunc = OnColorChanged,
+            opacityFunc = OnColorChanged,
+            cancelFunc = function(prev)
+                -- ColorPickerFrame builds this as {r=, g=, b=, a=} - alpha goes
+                -- IN as `opacity` and comes BACK as `a`.
+                local cfg = CfgFor(key)
+                cfg.r = (prev and prev.r) or prevR
+                cfg.g = (prev and prev.g) or prevG
+                cfg.b = (prev and prev.b) or prevB
+                cfg.a = (prev and prev.a) or prevA
+                page:Refresh()
+                addon.Refresh()
+            end,
+            hasOpacity = 1,
+            opacity = c.a,
+            r = c.r, g = c.g, b = c.b,
+        })
+    end)
+
+    return page
+end
+
+local function SelectTab(key)
+    activeTab = key
+    for _, k in ipairs(TAB_KEYS) do
+        tabs[k]:SetActive(k == key)
+        if k == key then
+            pages[k]:Refresh()
+            pages[k]:Show()
+        else
+            pages[k]:Hide()
+        end
+    end
+end
+
+local prevTab
+for _, key in ipairs(TAB_KEYS) do
+    local tab = S.Tab(win, TAB_TEXT[key])
+    if prevTab then
+        tab:SetPoint("LEFT", prevTab, "RIGHT", 6, 0)
+    else
+        tab:SetPoint("TOPLEFT", PAD, -58)
+    end
+    tab:SetScript("OnClick", function() SelectTab(key) end)
+    tabs[key] = tab
+    prevTab = tab
+end
+
+body:SetPoint("TOPLEFT", tabs.queue, "BOTTOMLEFT", 0, -8)
+
+for _, key in ipairs(TAB_KEYS) do
+    pages[key] = BuildPage(key)
+end
+
+local function RefreshAllPages()
+    for _, key in ipairs(TAB_KEYS) do
+        pages[key]:Refresh()
+    end
+end
 
 function addon.OnColorChangedExternally()
-    UpdateSwatch()
+    RefreshAllPages()
 end
 
 -- ---------------------------------------------------------------------
 -- Cast bar frame
 -- ---------------------------------------------------------------------
 local frameHeading = S.Heading(win, "CAST BAR FRAME")
-frameHeading:SetPoint("TOPLEFT", swatchHolder, "BOTTOMLEFT", 0, -28)
+frameHeading:SetPoint("TOPLEFT", body, "BOTTOMLEFT", 0, -24)
 frameHeading.Rule:SetPoint("RIGHT", win, "RIGHT", -PAD, 0)
 
 local editHolder, editBox = S.EditBox(win, 268, 26)
@@ -488,13 +623,13 @@ hint:SetFontObject(S.fontHint)
 hint:SetPoint("BOTTOMLEFT", PAD, PAD - 6)
 hint:SetPoint("BOTTOMRIGHT", -PAD, PAD - 6)
 hint:SetJustifyH("LEFT")
-hint:SetText("The overlay marks the trailing SpellQueueWindow portion of your cast bar.")
+hint:SetText("Add a colored overlay to the end of your CastBar indicating various time values")
 
 -- ---------------------------------------------------------------------
 -- Show / hide
 -- ---------------------------------------------------------------------
 win:SetScript("OnShow", function()
-    UpdateSwatch()
+    SelectTab(activeTab or "queue")
     editBox:SetText(addon.GetCastBarName())
     statusText:SetText("")
 end)
