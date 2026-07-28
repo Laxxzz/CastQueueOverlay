@@ -108,8 +108,10 @@ okButton:SetSize(60, 22)
 okButton:SetText("Okay")
 okButton:SetPoint("LEFT", editBox, "RIGHT", 8, 0)
 
+-- Anchored further down, once selectButton and the live picker readout exist.
+-- It is positioned last on purpose: it wraps, so its height changes with the
+-- message, and anything anchored below it would jump around.
 local statusText = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-statusText:SetPoint("TOPLEFT", editBox, "BOTTOMLEFT", -6, -8)
 statusText:SetWidth(420)
 statusText:SetJustifyH("LEFT")
 
@@ -152,6 +154,17 @@ selectButton:SetSize(140, 22)
 selectButton:SetText("Select Frame")
 selectButton:SetPoint("TOPLEFT", editBox, "BOTTOMLEFT", 0, -16)
 
+-- Live readout of what is under the cursor while picking. This shows the frame
+-- that clicking would actually select, not merely the topmost region, so the
+-- label, the green outline and the result of a click always agree.
+local pickerText = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+pickerText:SetPoint("TOPLEFT", selectButton, "BOTTOMLEFT", 0, -10)
+pickerText:SetWidth(420)
+pickerText:SetJustifyH("LEFT")
+pickerText:SetText("")
+
+statusText:SetPoint("TOPLEFT", pickerText, "BOTTOMLEFT", 0, -10)
+
 -- Green outline drawn around whatever frame is currently under the cursor.
 local highlight = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
 highlight:SetBackdrop({
@@ -167,9 +180,28 @@ highlight:Hide()
 -- Instead we poll C_System.GetFrameStack() on an OnUpdate. For click detection,
 -- we temporarily hook WorldFrame's OnMouseDown.
 local currentTarget
+local currentTargetName
 local isSelecting = false
 local originalWorldFrameOnMouseDown
 local poller -- created below; forward-declared so StopSelecting can stop it
+
+-- Frames that are under the cursor almost everywhere and are never what anyone
+-- means to pick. UIParent in particular was the whole problem: it is the common
+-- ancestor of nearly everything, so walking up from an anonymous region landed
+-- on it constantly.
+local function IsUselessPick(region)
+    return region == nil
+        or region == highlight
+        or region == UIParent
+        or region == WorldFrame
+end
+
+local function RegionName(region)
+    if not region or not region.GetName then return nil end
+    local ok, name = pcall(region.GetName, region)
+    if ok and name and name ~= "" then return name end
+    return nil
+end
 
 local function FindFrameUnderCursor()
     -- GetMouseFoci() was the wrong primitive and is why the picker kept landing
@@ -182,28 +214,36 @@ local function FindFrameUnderCursor()
     -- of mouse state - it is what Blizzard's own /framestack is built on
     -- (SlashCommands.lua:1350, Blizzard_DebugTools.lua:140).
     local stack = C_System and C_System.GetFrameStack and C_System.GetFrameStack() or {}
-    for _, region in ipairs(stack) do
-        -- Skip our own highlight and the two catch-all backdrops, which sit
-        -- under the cursor everywhere and are never a useful pick.
-        if region ~= highlight and region ~= WorldFrame and region ~= UIParent then
-            return region
-        end
-    end
-    return nil
-end
 
--- Walk up to the nearest ancestor that has a global name, since many
--- frames (especially inner textures/statusbars) are anonymous and can't
--- be referenced by name after a reload.
-local function GetNamedAncestor(frame)
-    while frame do
-        local ok, name = pcall(function() return frame.GetName and frame:GetName() end)
-        if ok and name and name ~= "" then
-            return frame, name
+    -- Search the stack itself for something NAMED rather than taking the topmost
+    -- region and walking up its parents. Most regions under the cursor are
+    -- anonymous textures and inner bars; the old parent-walk escaped straight to
+    -- UIParent for nearly all of them. A sibling in the stack is a far better
+    -- answer than a distant ancestor, and it can only ever return something the
+    -- cursor is genuinely over.
+    for _, region in ipairs(stack) do
+        if not IsUselessPick(region) then
+            local name = RegionName(region)
+            if name then return region, name end
         end
-        local ok2, parent = pcall(function() return frame.GetParent and frame:GetParent() end)
-        frame = ok2 and parent or nil
     end
+
+    -- Nothing in the stack is named. Fall back to a bounded parent walk from the
+    -- topmost usable region, stopping BEFORE the catch-alls so a miss reports as
+    -- a miss instead of silently selecting UIParent.
+    for _, region in ipairs(stack) do
+        if not IsUselessPick(region) then
+            local node = region
+            while node and not IsUselessPick(node) do
+                local name = RegionName(node)
+                if name then return node, name end
+                local ok, parent = pcall(node.GetParent, node)
+                node = ok and parent or nil
+            end
+            break
+        end
+    end
+
     return nil, nil
 end
 
@@ -217,6 +257,8 @@ local function StopSelecting()
     selectButton:SetText("Select Frame")
 
     if poller then poller:Hide() end
+    currentTargetName = nil
+    pickerText:SetText("")
 
     -- Restore original WorldFrame OnMouseDown. Note the original is usually nil,
     -- so this has to be unconditional - keying it off a truthy check would leave
@@ -236,17 +278,33 @@ end
 -- absolute screen coordinates, since the highlight and target may have
 -- different parents/strata.
 local function PositionHighlight(target)
-    if not target then return end
     highlight:ClearAllPoints()
-    -- Use GetRect to get absolute screen coordinates
-    local left, bottom, width, height = target:GetRect()
-    if left and bottom and width and height then
-        highlight:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left, bottom)
-        highlight:SetSize(width, height)
-        highlight:Show()
-    else
+    if not target then
         highlight:Hide()
+        return
     end
+
+    -- Anchor directly to the target instead of converting GetRect() into
+    -- UIParent-space coordinates. GetRect returns values in the target's OWN
+    -- coordinate system, so any frame whose effective scale differs from
+    -- UIParent's - which is most of a custom UI, and all of EllesmereUI - was
+    -- outlined at the wrong place and size, or off-screen entirely. Anchoring
+    -- lets the engine resolve the scale difference.
+    local ok = pcall(function()
+        highlight:SetPoint("TOPLEFT", target, "TOPLEFT", 0, 0)
+        highlight:SetPoint("BOTTOMRIGHT", target, "BOTTOMRIGHT", 0, 0)
+    end)
+
+    -- A zero-sized region would draw as an invisible outline, which reads as
+    -- "the picker is broken" rather than "there is nothing to see here".
+    local w, h = target:GetWidth(), target:GetHeight()
+    if not ok or not w or not h or w <= 0 or h <= 0 then
+        highlight:ClearAllPoints()
+        highlight:Hide()
+        return
+    end
+
+    highlight:Show()
 end
 
 -- Polling frame for cursor tracking (no mouse capture, doesn't block anything)
@@ -254,10 +312,18 @@ poller = CreateFrame("Frame")
 poller:Hide()
 poller:SetScript("OnUpdate", function()
     if not isSelecting then return end
-    local target = FindFrameUnderCursor()
-    if target ~= currentTarget then
-        currentTarget = target
-        PositionHighlight(target)
+    local target, name = FindFrameUnderCursor()
+    if target == currentTarget then return end
+
+    currentTarget = target
+    currentTargetName = name
+    PositionHighlight(target)
+
+    if name then
+        pickerText:SetText("Under cursor: |cff33ff99" .. name .. "|r")
+    else
+        -- Genuinely nothing selectable here, rather than a silent UIParent.
+        pickerText:SetText("Under cursor: |cff999999(no named frame)|r")
     end
 end)
 
@@ -278,17 +344,13 @@ selectButton:SetScript("OnClick", function()
         if not isSelecting then return end
         if button ~= "LeftButton" then return end
 
-        local target = currentTarget
+        -- Use the name the readout was already showing. Re-deriving it here is
+        -- what let the click disagree with the outline and the label.
+        local name = currentTargetName
         StopSelecting()
 
-        if not target then
-            statusText:SetText("|cffff5555No frame under cursor.|r")
-            return
-        end
-
-        local namedFrame, name = GetNamedAncestor(target)
-        if not namedFrame then
-            statusText:SetText("|cffff5555That frame (and its parents) have no usable name - try a different one.|r")
+        if not name then
+            statusText:SetText("|cffff5555Nothing selectable there - no named frame under the cursor.|r")
             return
         end
 
