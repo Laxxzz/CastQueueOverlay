@@ -102,6 +102,215 @@ local function CfgFor(key)
     return CastQueueOverlayDB.overlays[key]
 end
 
+-- ---------------------------------------------------------------------
+-- Colour picker
+-- ---------------------------------------------------------------------
+-- Our own, rather than skinning Blizzard's ColorPickerFrame. That frame is
+-- SHARED: restyling it would silently change the colour picker for every other
+-- addon the player has installed. Acceptable in a personal UI, not in something
+-- distributed.
+--
+-- The wheel, value bar and alpha bar are engine-rendered - note Blizzard's XML
+-- gives those textures no `file` attribute (ColorPickerFrame.xml:126-155). We
+-- supply blank textures and the engine fills them, so this is a restyle of the
+-- chrome only and the colour maths stays Blizzard's.
+local PICKER_W, PICKER_H = 268, 268
+local WHEEL = 124
+local BAR_W = 20
+
+local picker = CreateFrame("Frame", "CastQueueOverlayColorPickerFrame", UIParent)
+picker:SetSize(PICKER_W, PICKER_H)
+picker:SetFrameStrata("FULLSCREEN_DIALOG") -- above the options window
+picker:SetToplevel(true)
+picker:EnableMouse(true)
+picker:SetMovable(true)
+picker:SetClampedToScreen(true)
+picker:RegisterForDrag("LeftButton")
+picker:SetScript("OnDragStart", picker.StartMoving)
+picker:SetScript("OnDragStop", picker.StopMovingOrSizing)
+picker:Hide()
+
+S.Fill(picker, S.color.canvas)
+S.Border(picker, S.color.border)
+
+local pickerTitle = S.Heading(picker, "OVERLAY COLOUR")
+pickerTitle:SetPoint("TOPLEFT", 16, -16)
+pickerTitle.Rule:SetPoint("RIGHT", picker, "RIGHT", -16, 0)
+
+-- `ColorSelect` is a first-class widget type in Blizzard's UI schema
+-- (UI.xsd:966,982), but Blizzard only ever instantiates it from XML - there is
+-- not one `CreateFrame("ColorSelect")` in their entire 12.0.7 Lua source. The
+-- type ought to be creatable, but "ought to" is not verification, and an error
+-- here would abort this whole file at load and take the addon with it. Guarded,
+-- with a fall back to Blizzard's own picker further down.
+local ok, sel = pcall(CreateFrame, "ColorSelect", nil, picker)
+if not ok then sel = nil end
+
+if sel then
+sel:SetPoint("TOPLEFT", 16, -40)
+sel:SetSize(WHEEL + 16 + BAR_W + 16 + BAR_W, WHEEL)
+
+local wheelTex = sel:CreateTexture()
+sel:SetColorWheelTexture(wheelTex)
+wheelTex:SetPoint("TOPLEFT")
+wheelTex:SetSize(WHEEL, WHEEL)
+
+-- Flat thumbs instead of Interface\Buttons\UI-ColorPicker-Buttons, which carries
+-- Blizzard's gold. White reads against every hue on the wheel.
+local wheelThumb = sel:CreateTexture(nil, "OVERLAY")
+sel:SetColorWheelThumbTexture(wheelThumb)
+wheelThumb:SetSize(8, 8)
+wheelThumb:SetColorTexture(1, 1, 1, 1)
+
+local valueTex = sel:CreateTexture()
+sel:SetColorValueTexture(valueTex)
+valueTex:SetPoint("TOPLEFT", wheelTex, "TOPRIGHT", 16, 0)
+valueTex:SetSize(BAR_W, WHEEL)
+
+local valueThumb = sel:CreateTexture(nil, "OVERLAY")
+sel:SetColorValueThumbTexture(valueThumb)
+valueThumb:SetSize(BAR_W + 10, 6)
+valueThumb:SetColorTexture(S.Unpack(S.color.accent))
+
+local alphaTex = sel:CreateTexture()
+sel:SetColorAlphaTexture(alphaTex)
+alphaTex:SetPoint("TOPLEFT", valueTex, "TOPRIGHT", 16, 0)
+alphaTex:SetSize(BAR_W, WHEEL)
+
+local alphaThumb = sel:CreateTexture(nil, "OVERLAY")
+sel:SetColorAlphaThumbTexture(alphaThumb)
+alphaThumb:SetSize(BAR_W + 10, 6)
+alphaThumb:SetColorTexture(S.Unpack(S.color.accent))
+end -- if sel
+
+-- Hex field
+local hexHolder, hexEdit = S.EditBox(picker, 84, 24)
+hexHolder:SetPoint("TOPLEFT", sel, "BOTTOMLEFT", 0, -18)
+
+local hexHash = picker:CreateFontString(nil, "OVERLAY")
+hexHash:SetFontObject(S.fontSmall)
+hexHash:SetText("#")
+hexHash:SetPoint("RIGHT", hexHolder, "LEFT", -6, 0)
+
+local opacityText = picker:CreateFontString(nil, "OVERLAY")
+opacityText:SetFontObject(S.fontSmall)
+opacityText:SetPoint("LEFT", hexHolder, "RIGHT", 12, 0)
+
+local okBtn = S.Button(picker, "Done", 74, 24, true)
+okBtn:SetPoint("BOTTOMRIGHT", -16, 16)
+
+local cancelBtn = S.Button(picker, "Cancel", 74, 24)
+cancelBtn:SetPoint("RIGHT", okBtn, "LEFT", -8, 0)
+
+-- State for the currently open picker session.
+local pickerCfg, pickerOnChange, pickerRestore
+local suppressCallback = false
+
+local function PickerApply()
+    if not pickerCfg then return end
+    local r, g, b = sel:GetColorRGB()
+    pickerCfg.r, pickerCfg.g, pickerCfg.b = r, g, b
+    pickerCfg.a = sel:GetColorAlpha()
+
+    if not hexEdit:HasFocus() then
+        hexEdit:SetText(("%02X%02X%02X"):format(
+            math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5)))
+    end
+    opacityText:SetText(("%d%% opacity"):format(math.floor(pickerCfg.a * 100 + 0.5)))
+
+    if pickerOnChange then pickerOnChange() end
+end
+
+-- One handler covers the wheel, the value bar AND the alpha bar. There is no
+-- separate alpha event - Blizzard drives both swatchFunc and opacityFunc from
+-- this same script (ColorPickerFrame.lua:4-17).
+if sel then
+    sel:SetScript("OnColorSelect", function()
+        if suppressCallback then return end
+        PickerApply()
+    end)
+end
+
+hexEdit:SetScript("OnEnterPressed", function(self)
+    local text = (self:GetText() or ""):gsub("^#", "")
+    local r, g, b = text:match("^(%x%x)(%x%x)(%x%x)$")
+    if r then
+        suppressCallback = true
+        sel:SetColorRGB(tonumber(r, 16) / 255, tonumber(g, 16) / 255, tonumber(b, 16) / 255)
+        suppressCallback = false
+        PickerApply()
+    end
+    self:ClearFocus()
+end)
+hexEdit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+
+local function ClosePicker()
+    picker:Hide()
+    pickerCfg, pickerOnChange, pickerRestore = nil, nil, nil
+end
+
+okBtn:SetScript("OnClick", ClosePicker)
+
+cancelBtn:SetScript("OnClick", function()
+    if pickerCfg and pickerRestore then
+        pickerCfg.r, pickerCfg.g = pickerRestore.r, pickerRestore.g
+        pickerCfg.b, pickerCfg.a = pickerRestore.b, pickerRestore.a
+        if pickerOnChange then pickerOnChange() end
+    end
+    ClosePicker()
+end)
+
+-- Fallback for the case where ColorSelect could not be created. Blizzard's own
+-- picker is unstyled but proven - it is what shipped in 2.0.0 - so the feature
+-- degrades in appearance rather than breaking.
+local function ShowBlizzardColorPicker(cfg, onChange)
+    local prevR, prevG, prevB, prevA = cfg.r, cfg.g, cfg.b, cfg.a
+    local function apply()
+        cfg.r, cfg.g, cfg.b = ColorPickerFrame:GetColorRGB()
+        cfg.a = ColorPickerFrame:GetColorAlpha()
+        if onChange then onChange() end
+    end
+    ColorPickerFrame:SetupColorPickerAndShow({
+        swatchFunc = apply,
+        opacityFunc = apply,
+        cancelFunc = function(prev)
+            -- Alpha goes IN as `opacity` and comes BACK as `a`.
+            cfg.r = (prev and prev.r) or prevR
+            cfg.g = (prev and prev.g) or prevG
+            cfg.b = (prev and prev.b) or prevB
+            cfg.a = (prev and prev.a) or prevA
+            if onChange then onChange() end
+        end,
+        hasOpacity = 1,
+        opacity = cfg.a,
+        r = cfg.r, g = cfg.g, b = cfg.b,
+    })
+end
+
+local function ShowColorPicker(cfg, onChange)
+    if not sel then
+        ShowBlizzardColorPicker(cfg, onChange)
+        return
+    end
+
+    pickerCfg, pickerOnChange = cfg, onChange
+    -- Snapshot BY VALUE. cfg is a live reference into the saved variables and is
+    -- mutated on every drag, so it cannot serve as its own restore point.
+    pickerRestore = { r = cfg.r, g = cfg.g, b = cfg.b, a = cfg.a }
+
+    -- Seed without firing the callback, or the first paint would write the
+    -- pre-seed colour straight back over the saved one.
+    suppressCallback = true
+    sel:SetColorRGB(cfg.r, cfg.g, cfg.b)
+    sel:SetColorAlpha(cfg.a or 1)
+    suppressCallback = false
+
+    picker:ClearAllPoints()
+    picker:SetPoint("TOPLEFT", win, "TOPRIGHT", 12, 0)
+    picker:Show()
+    PickerApply()
+end
+
 -- Builds the body content for one overlay. Every page is identical except that
 -- `custom` gains a value field, since its milliseconds are not read from the game.
 local function BuildPage(key)
@@ -202,39 +411,11 @@ local function BuildPage(key)
         end)
     end
 
-    local function OnColorChanged()
-        local c = CfgFor(key)
-        c.r, c.g, c.b = ColorPickerFrame:GetColorRGB()
-        c.a = ColorPickerFrame:GetColorAlpha()
-        page:Refresh()
-        addon.Refresh()
-    end
-
     swatchBtn:SetScript("OnClick", function()
-        local c = CfgFor(key)
-        -- Snapshot by value. `c` is a live reference into the saved variables and
-        -- is mutated by swatchFunc while the picker is open, so it cannot serve
-        -- as its own restore point.
-        local prevR, prevG, prevB, prevA = c.r, c.g, c.b, c.a
-
-        ColorPickerFrame:SetupColorPickerAndShow({
-            swatchFunc = OnColorChanged,
-            opacityFunc = OnColorChanged,
-            cancelFunc = function(prev)
-                -- ColorPickerFrame builds this as {r=, g=, b=, a=} - alpha goes
-                -- IN as `opacity` and comes BACK as `a`.
-                local cfg = CfgFor(key)
-                cfg.r = (prev and prev.r) or prevR
-                cfg.g = (prev and prev.g) or prevG
-                cfg.b = (prev and prev.b) or prevB
-                cfg.a = (prev and prev.a) or prevA
-                page:Refresh()
-                addon.Refresh()
-            end,
-            hasOpacity = 1,
-            opacity = c.a,
-            r = c.r, g = c.g, b = c.b,
-        })
+        ShowColorPicker(CfgFor(key), function()
+            page:Refresh()
+            addon.Refresh()
+        end)
     end)
 
     return page
@@ -670,6 +851,11 @@ end)
 -- WorldFrame hook was still installed but the panel could not respond.
 win:SetScript("OnHide", function()
     if isSelecting then StopSelecting() end
+    -- The picker is parented to UIParent so it can float outside this window, so
+    -- it does not inherit the hide. Leaving it behind would strand a colour
+    -- picker with no visible owner and a Cancel that writes to a panel you can
+    -- no longer see.
+    if picker:IsShown() then picker:Hide() end
 end)
 
 -- Combat can start while the window is open and the picker is armed. Shut the
