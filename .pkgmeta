@@ -1,0 +1,16 @@
+# Controls what the BigWigsMods packager puts in the built zip.
+#
+# Without this, the packager would ship the whole repository - README, licence,
+# screenshots, workflow files - inside the addon folder. The zip should contain
+# only what the client actually loads, matching the hand-built artifacts for
+# 2.0.0 and 2.1.0.
+package-as: CastQueueOverlay
+
+ignore:
+  - .github
+  - .gitattributes
+  - .gitignore
+  - .pkgmeta
+  - README.md
+  - LICENSE
+  - media

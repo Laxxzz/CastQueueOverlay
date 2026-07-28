@@ -1,0 +1,40 @@
+name: Package and release
+
+# Annotated tags only. The packager derives the version from the tag, and a
+# lightweight tag carries no tagger metadata for it to read - so create releases
+# with `git tag -a v2.2.0 -m "..."`, not a bare `git tag v2.2.0`.
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    env:
+      # BigWigsMods' own docs disagree with themselves here: the README names
+      # CF_API_TOKEN, the wiki's example workflow names CF_API_KEY. Both are set
+      # from the same secret so the upload authenticates whichever one the action
+      # actually reads. Harmless if one is ignored.
+      CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      CF_API_KEY: ${{ secrets.CF_API_TOKEN }}
+
+      # Provided automatically by Actions. Needs read-write workflow permissions
+      # on the repository, or publishing fails with "Resource not accessible by
+      # integration".
+      GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Clone project
+        uses: actions/checkout@v4
+        with:
+          # Full history: the packager builds the changelog from the commits
+          # since the previous tag, and a shallow clone has nothing to compare.
+          fetch-depth: 0
+
+      - name: Package and release
+        uses: BigWigsMods/packager@v2
