@@ -77,9 +77,11 @@ Linting is not testing — there is no way to execute addon code outside the gam
 A clean lint means the syntax parses and every API referenced exists in the
 12.0.7 documentation, nothing more.
 
-`CLAUDE.md` documents the design decisions that are load-bearing and the bugs
-that resulted from "fixing" them. Read it before changing initialisation order,
-the frame picker, or anything touching secret values.
+Several things in this addon look like they could be simplified and cannot be.
+Initialisation order, the frame picker's choice of API, and anything reading
+values off frames the addon does not own are all load-bearing — the inline
+comments explain why in each case, and they are worth reading before changing
+those areas.
 
 ## Licence
 
