@@ -4,6 +4,7 @@
 ## Author: Laxx
 ## Version: 2.0.0
 ## SavedVariables: CastQueueOverlayDB
+## X-Curse-Project-ID: 1628899
 
 CastQueueOverlayStyle.lua
 CastQueueOverlayOptions.lua
