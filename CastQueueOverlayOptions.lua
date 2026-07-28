@@ -504,6 +504,28 @@ local function PositionHighlight(target)
     highlight:Show()
 end
 
+-- `EnableKeyboard` and `SetPropagateKeyboardInput` are protected in combat EVEN
+-- ON OUR OWN FRAME, because they alter global keyboard routing:
+--
+--   [ADDON_ACTION_BLOCKED] ... tried to call the protected function
+--   'CastQueueOverlayOptionsFrame:SetPropagateKeyboardInput()'
+--
+-- Clearing the OnKeyDown script is NOT protected and is what actually stops us
+-- consuming keys, so that happens unconditionally. Only the two protected calls
+-- are deferred, and combat end drains them.
+local deferredKeyboardRelease = false
+
+local function ReleaseKeyboard()
+    win:SetScript("OnKeyDown", nil)
+    if InCombatLockdown() then
+        deferredKeyboardRelease = true
+        return
+    end
+    deferredKeyboardRelease = false
+    win:EnableKeyboard(false)
+    win:SetPropagateKeyboardInput(true)
+end
+
 -- Every exit path must go through here. Selecting installs a WorldFrame script,
 -- an OnUpdate poller and a keyboard grab; leaking any one outlives the picker.
 local function StopSelecting()
@@ -523,9 +545,7 @@ local function StopSelecting()
     WorldFrame:SetScript("OnMouseDown", originalWorldFrameOnMouseDown)
     originalWorldFrameOnMouseDown = nil
 
-    win:SetScript("OnKeyDown", nil)
-    win:EnableKeyboard(false)
-    win:SetPropagateKeyboardInput(true)
+    ReleaseKeyboard()
 end
 
 local POLL_INTERVAL = 0.1
@@ -566,6 +586,15 @@ selectButton:SetScript("OnClick", function()
         StopSelecting()
         return
     end
+
+    -- The picker needs the keyboard for TAB and Escape, and both calls that grab
+    -- it are blocked in combat. Refuse up front rather than starting a picker
+    -- whose cycling and cancel keys would silently not work.
+    if InCombatLockdown() then
+        statusText:SetText(S.Colorize(S.color.bad, "The frame picker needs the keyboard and is unavailable in combat."))
+        return
+    end
+
     isSelecting = true
     currentTarget = nil
     candidateIndex = 1
@@ -641,6 +670,23 @@ end)
 -- WorldFrame hook was still installed but the panel could not respond.
 win:SetScript("OnHide", function()
     if isSelecting then StopSelecting() end
+end)
+
+-- Combat can start while the window is open and the picker is armed. Shut the
+-- picker down rather than let it run with keys it can no longer grab or release,
+-- and drain any cleanup that combat forced us to postpone.
+local combatWatcher = CreateFrame("Frame")
+combatWatcher:RegisterEvent("PLAYER_REGEN_DISABLED")
+combatWatcher:RegisterEvent("PLAYER_REGEN_ENABLED")
+combatWatcher:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_REGEN_DISABLED" then
+        if isSelecting then
+            StopSelecting()
+            statusText:SetText(S.Colorize(S.color.textMuted, "Frame picker stopped - combat started."))
+        end
+    elseif deferredKeyboardRelease then
+        ReleaseKeyboard()
+    end
 end)
 
 function addon.ToggleOptions()

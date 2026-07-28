@@ -385,6 +385,14 @@ f:SetScript("OnEvent", function(self, event, unit, ...)
         return
     end
 
+    if event == "PLAYER_REGEN_ENABLED" then
+        if pendingOptions then
+            pendingOptions = false
+            if addon.ShowOptions then addon.ShowOptions() end
+        end
+        return
+    end
+
     if event == "CVAR_UPDATE" then
         -- CVAR_UPDATE fires for every CVar the client touches, not just ours.
         -- arg1 is the CVar name; Blizzard's own handlers filter on it
@@ -419,6 +427,7 @@ end)
 
 f:RegisterEvent("PLAYER_LOGIN")
 f:RegisterEvent("CVAR_UPDATE")
+f:RegisterEvent("PLAYER_REGEN_ENABLED") -- drains a /cqo deferred by combat
 f:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
 f:RegisterUnitEvent("UNIT_SPELLCAST_DELAYED", "player")
 f:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "player")
@@ -436,6 +445,8 @@ f:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_STOP", "player")
 -- arguments were removed deliberately, everything is configured in the panel.
 -- ---------------------------------------------------------------------
 SLASH_CASTQUEUEOVERLAY1 = "/cqo"
+local pendingOptions = false
+
 SlashCmdList["CASTQUEUEOVERLAY"] = function()
     -- Opens our own frame. It deliberately does NOT go through
     -- `Settings.OpenToCategory`, which forwards to the PROTECTED
@@ -449,5 +460,26 @@ SlashCmdList["CASTQUEUEOVERLAY"] = function()
         print("|cff33ff99CastQueueOverlay:|r options window failed to load - check for Lua errors (/console scriptErrors 1).")
         return
     end
+
+    -- Blocked in combat by choice, not by necessity. Showing this window in
+    -- combat is legal - it is our own frame, so Show/Hide are not protected for
+    -- it - but the frame picker inside it calls EnableKeyboard and
+    -- SetPropagateKeyboardInput, which ARE blocked in combat even on our own
+    -- frame because they alter global keyboard routing:
+    --
+    --   [ADDON_ACTION_BLOCKED] ... tried to call the protected function
+    --   'CastQueueOverlayOptionsFrame:SetPropagateKeyboardInput()'
+    --
+    -- Rather than open a window with a control that cannot work, defer the whole
+    -- thing to the end of combat.
+    if InCombatLockdown() then
+        pendingOptions = true
+        print("|cff33ff99CastQueueOverlay:|r in combat - the options window will open when combat ends.")
+        return
+    end
+
+    -- A queued open that the player then cancels with a second /cqo should not
+    -- fire later.
+    pendingOptions = false
     addon.ToggleOptions()
 end
