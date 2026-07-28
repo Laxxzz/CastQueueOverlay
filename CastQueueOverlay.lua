@@ -19,15 +19,6 @@ local defaults = {
     },
 }
 
--- Fixed iteration order. `pairs` over the overlays table would vary run to run,
--- and these are drawn in a computed z-order that has to be reproducible.
-addon.OVERLAY_KEYS = { "queue", "latency", "custom" }
-addon.OVERLAY_LABELS = {
-    queue   = "SpellQueueWindow",
-    latency = "Latency",
-    custom  = "Custom",
-}
-
 -- `DB = DB or {}` alone only covers a first run. A user upgrading from a build
 -- that predates a key keeps their saved table, that key stays nil, and the addon
 -- breaks only for existing users - which never reproduces on a fresh install.
@@ -78,6 +69,21 @@ end)
 CastQueueOverlay = CastQueueOverlay or {}
 local addon = CastQueueOverlay
 addon.DEFAULT_FRAME_NAME = "PlayerCastingBarFrame"
+
+-- Fixed iteration order. `pairs` over the overlays table would vary run to run,
+-- and these are drawn in a computed z-order that has to be reproducible.
+--
+-- These live HERE, below the namespace capture, and not up beside `defaults`
+-- where they logically belong. `addon` is a local assigned on the line above; any
+-- `addon.X = ...` placed earlier in the file indexes a nil global and aborts the
+-- whole file at load - taking the slash command, the event handler and every
+-- public function with it. See decision #1: this file has been broken this exact
+-- way before.
+-- Labels deliberately live in the options file, not here. This file loads LAST,
+-- so the options file cannot read anything off `addon` at its own file scope -
+-- a shared label table would have to be consumed lazily, and two constants that
+-- must agree are worse than one owned by the file that draws them.
+addon.OVERLAY_KEYS = { "queue", "latency", "custom" }
 
 local overlays = {}   -- key -> texture
 local overlay          -- the queue texture; kept so EnsureOverlay can report success
