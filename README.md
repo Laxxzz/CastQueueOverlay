@@ -66,23 +66,6 @@ World of Warcraft/_retail_/Interface/AddOns/
 
 Then `/reload` or restart the client.
 
-## Development
-
-This addon is linted with `Test-WowAddon.ps1` from a separate, private WoW API
-reference toolkit — it parse-checks with LuaJIT (the same Lua 5.1 dialect the
-game uses), validates the `.toc`, and resolves every API call against Blizzard's
-generated 12.0.7 documentation. That toolkit is not part of this repository.
-
-Linting is not testing — there is no way to execute addon code outside the game.
-A clean lint means the syntax parses and every API referenced exists in the
-12.0.7 documentation, nothing more.
-
-Several things in this addon look like they could be simplified and cannot be.
-Initialisation order, the frame picker's choice of API, and anything reading
-values off frames the addon does not own are all load-bearing — the inline
-comments explain why in each case, and they are worth reading before changing
-those areas.
-
 ## Licence
 
 MIT — see [LICENSE](LICENSE).
