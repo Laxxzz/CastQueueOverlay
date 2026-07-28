@@ -16,12 +16,21 @@ local defaults = {
 -- `DB = DB or {}` alone only covers a first run. A user upgrading from a build
 -- that predates a key keeps their saved table, that key stays nil, and the addon
 -- breaks only for existing users - which never reproduces on a fresh install.
-CastQueueOverlayDB = CastQueueOverlayDB or {}
-for k, v in pairs(defaults) do
-    if CastQueueOverlayDB[k] == nil then
-        CastQueueOverlayDB[k] = v
+--
+-- This MUST run inside ContinueOnAddOnLoaded, not at file scope. Saved variables
+-- are restored before ADDON_LOADED fires but after this file executes, so a
+-- file-scope merge builds a defaults table that the restore then replaces
+-- wholesale - the merge is silently discarded and every key the saved table
+-- lacks stays nil. Every read below (ResolveCastBar, ApplyOverlay's colour) runs
+-- later than this callback, so nothing races it.
+EventUtil.ContinueOnAddOnLoaded(ADDON_NAME, function()
+    CastQueueOverlayDB = CastQueueOverlayDB or {}
+    for k, v in pairs(defaults) do
+        if CastQueueOverlayDB[k] == nil then
+            CastQueueOverlayDB[k] = v
+        end
     end
-end
+end)
 
 -- Shared namespace so the options panel can drive the overlay without
 -- reaching into locals.
