@@ -235,7 +235,26 @@ local function CoversScreen(region)
     return w >= pw * SCREEN_COVER_RATIO and h >= ph * SCREEN_COVER_RATIO
 end
 
-local function FindFrameUnderCursor()
+-- Decorative overlays live at TOOLTIP strata. Blizzard treats that strata as a
+-- special case itself (Menu.lua:2121). EllesmereUIQoL alone puts four
+-- mouse-disabled decorations there - ECL_TrailContainer, ECL_GCDRoot,
+-- ECL_CastRoot and EllesmereUICursorFrame, the last of which FOLLOWS the cursor
+-- and so is both tiny and always under it. No size or depth heuristic survives
+-- that, which is why these are demoted rather than excluded: demoting keeps them
+-- reachable if someone genuinely wants one, and excluding by name would just
+-- start an arms race with every UI suite.
+local function IsDecorative(region)
+    if not region.GetFrameStrata then return false end
+    local ok, strata = pcall(region.GetFrameStrata, region)
+    return ok and strata == "TOOLTIP"
+end
+
+-- Rebuilt each poll. Ranked best-guess first, but the user can cycle, because no
+-- ranking is going to be right for every UI.
+local candidates = {}
+local candidateIndex = 1
+
+local function CollectCandidates()
     -- GetMouseFoci() was the wrong primitive and is why the picker kept landing
     -- on WorldFrame. It only reports regions with mouse input ENABLED; cast bars
     -- and most display-only frames call EnableMouse(false), so they are never in
@@ -260,22 +279,33 @@ local function FindFrameUnderCursor()
     -- while the thing you are actually pointing at is the most specific region
     -- containing the cursor. Smallest-area is also independent of stack order, so
     -- it cannot silently rot if that ordering ever changes.
-    local best, bestName, bestArea
+    candidates = {}
     for _, region in ipairs(stack) do
         if not IsUselessPick(region) and not CoversScreen(region) then
             local name = RegionName(region)
             if name then
                 local w, h = NormalisedSize(region)
                 if w then
-                    local area = w * h
-                    if not bestArea or area < bestArea then
-                        best, bestName, bestArea = region, name, area
-                    end
+                    candidates[#candidates + 1] = {
+                        region = region,
+                        name = name,
+                        area = w * h,
+                        decorative = IsDecorative(region),
+                    }
                 end
             end
         end
     end
-    if best then return best, bestName end
+
+    -- Real UI first, then most specific. Sorting rather than picking means a
+    -- wrong guess costs a keypress instead of a bug report.
+    table.sort(candidates, function(a, b)
+        if a.decorative ~= b.decorative then return b.decorative end
+        if a.area ~= b.area then return a.area < b.area end
+        return a.name < b.name -- stable, so the list does not jitter while hovering
+    end)
+
+    if #candidates > 0 then return end
 
     -- Nothing in the stack is named. Fall back to a bounded parent walk from the
     -- topmost usable region, stopping BEFORE the catch-alls so a miss reports as
@@ -287,15 +317,32 @@ local function FindFrameUnderCursor()
                 local name = RegionName(node)
                 -- Same exclusion on the way up: a screen-covering ancestor is no
                 -- more useful than a screen-covering sibling.
-                if name and not CoversScreen(node) then return node, name end
+                if name and not CoversScreen(node) then
+                    local w, h = NormalisedSize(node)
+                    candidates[1] = {
+                        region = node,
+                        name = name,
+                        area = (w and h) and (w * h) or 0,
+                        decorative = IsDecorative(node),
+                    }
+                    return
+                end
                 local ok, parent = pcall(node.GetParent, node)
                 node = ok and parent or nil
             end
             break
         end
     end
+end
 
-    return nil, nil
+local function CurrentCandidate()
+    if #candidates == 0 then return nil, nil end
+    -- Clamp rather than reset. The set changes constantly as the cursor moves, and
+    -- resetting to 1 on every change would make cycling impossible to hold onto.
+    if candidateIndex > #candidates then candidateIndex = #candidates end
+    if candidateIndex < 1 then candidateIndex = 1 end
+    local entry = candidates[candidateIndex]
+    return entry.region, entry.name
 end
 
 -- Every exit path must go through here. Selecting installs three things - a
@@ -310,6 +357,8 @@ local function StopSelecting()
     if poller then poller:Hide() end
     currentTargetName = nil
     pickerText:SetText("")
+    candidates = {}
+    candidateIndex = 1
 
     -- Restore original WorldFrame OnMouseDown. Note the original is usually nil,
     -- so this has to be unconditional - keying it off a truthy check would leave
@@ -361,21 +410,38 @@ end
 -- Polling frame for cursor tracking (no mouse capture, doesn't block anything)
 poller = CreateFrame("Frame")
 poller:Hide()
-poller:SetScript("OnUpdate", function()
-    if not isSelecting then return end
-    local target, name = FindFrameUnderCursor()
-    if target == currentTarget then return end
+-- Walking the frame stack and sorting it every single frame is real work for no
+-- benefit; the cursor cannot move meaningfully in 16ms.
+local POLL_INTERVAL = 0.1
+local sinceLastPoll = 0
+
+local function RefreshPicker()
+    CollectCandidates()
+    local target, name = CurrentCandidate()
 
     currentTarget = target
     currentTargetName = name
     PositionHighlight(target)
 
-    if name then
-        pickerText:SetText("Under cursor: |cff33ff99" .. name .. "|r")
-    else
+    if not name then
         -- Genuinely nothing selectable here, rather than a silent UIParent.
         pickerText:SetText("Under cursor: |cff999999(no named frame)|r")
+        return
     end
+
+    local suffix = ""
+    if #candidates > 1 then
+        suffix = ("  |cff999999(%d of %d - TAB to cycle)|r"):format(candidateIndex, #candidates)
+    end
+    pickerText:SetText("Under cursor: |cff33ff99" .. name .. "|r" .. suffix)
+end
+
+poller:SetScript("OnUpdate", function(self, elapsed)
+    if not isSelecting then return end
+    sinceLastPoll = sinceLastPoll + elapsed
+    if sinceLastPoll < POLL_INTERVAL then return end
+    sinceLastPoll = 0
+    RefreshPicker()
 end)
 
 selectButton:SetScript("OnClick", function()
@@ -385,7 +451,8 @@ selectButton:SetScript("OnClick", function()
     end
     isSelecting = true
     currentTarget = nil
-    statusText:SetText("Click a frame in your UI to select it. (Esc to cancel)")
+    candidateIndex = 1
+    statusText:SetText("Click a frame in your UI to select it. TAB cycles overlapping frames, Esc cancels.")
     selectButton:SetText("Selecting... (Esc to cancel)")
     poller:Show()
 
@@ -414,11 +481,32 @@ selectButton:SetScript("OnClick", function()
     -- all of this back down.
     panel:EnableKeyboard(true)
     panel:SetPropagateKeyboardInput(true)
+    -- TAB cycles rather than the mouse wheel: while picking, the cursor is over
+    -- arbitrary frames, and catching the wheel globally would need the very
+    -- full-screen mouse-enabled catcher this design avoids. Keyboard input is
+    -- frame-local and works wherever the cursor happens to be.
+    --
+    -- Propagation is turned off for exactly the two keys we consume and left on
+    -- for everything else, so chat and the rest of the UI keep working.
     panel:SetScript("OnKeyDown", function(self, key)
-        if not isSelecting then return end
+        if not isSelecting then
+            self:SetPropagateKeyboardInput(true)
+            return
+        end
+
         if key == "ESCAPE" then
+            self:SetPropagateKeyboardInput(false)
             StopSelecting()
             statusText:SetText("Selection cancelled.")
+        elseif key == "TAB" then
+            self:SetPropagateKeyboardInput(false)
+            if #candidates > 1 then
+                candidateIndex = candidateIndex + 1
+                if candidateIndex > #candidates then candidateIndex = 1 end
+                RefreshPicker()
+            end
+        else
+            self:SetPropagateKeyboardInput(true)
         end
     end)
 end)
