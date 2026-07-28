@@ -164,20 +164,29 @@ highlight:EnableMouse(false)
 highlight:Hide()
 
 -- We don't use a full-screen catcher frame (it blocks mouse events).
--- Instead we poll GetMouseFoci() on an OnUpdate. For click detection,
+-- Instead we poll C_System.GetFrameStack() on an OnUpdate. For click detection,
 -- we temporarily hook WorldFrame's OnMouseDown.
 local currentTarget
 local isSelecting = false
 local originalWorldFrameOnMouseDown
+local poller -- created below; forward-declared so StopSelecting can stop it
 
 local function FindFrameUnderCursor()
-    -- GetMouseFoci() is plural and returns a TABLE (TWW+). The old singular
-    -- GetMouseFocus() does not exist in 12.0.7 - verified absent from both the
-    -- generated API docs and Blizzard's UI source - so there is no fallback to make.
-    local foci = GetMouseFoci and GetMouseFoci() or {}
-    for _, frame in ipairs(foci) do
-        if frame ~= highlight then
-            return frame
+    -- GetMouseFoci() was the wrong primitive and is why the picker kept landing
+    -- on WorldFrame. It only reports regions with mouse input ENABLED; cast bars
+    -- and most display-only frames call EnableMouse(false), so they are never in
+    -- that list, and with nothing else eligible the cursor resolves to WorldFrame
+    -- across most of the screen.
+    --
+    -- C_System.GetFrameStack() returns every region under the cursor regardless
+    -- of mouse state - it is what Blizzard's own /framestack is built on
+    -- (SlashCommands.lua:1350, Blizzard_DebugTools.lua:140).
+    local stack = C_System and C_System.GetFrameStack and C_System.GetFrameStack() or {}
+    for _, region in ipairs(stack) do
+        -- Skip our own highlight and the two catch-all backdrops, which sit
+        -- under the cursor everywhere and are never a useful pick.
+        if region ~= highlight and region ~= WorldFrame and region ~= UIParent then
+            return region
         end
     end
     return nil
@@ -198,16 +207,29 @@ local function GetNamedAncestor(frame)
     return nil, nil
 end
 
+-- Every exit path must go through here. Selecting installs three things - a
+-- WorldFrame script, an OnUpdate poller and a keyboard grab - and leaking any
+-- one of them outlives the picker.
 local function StopSelecting()
     isSelecting = false
     highlight:Hide()
     currentTarget = nil
     selectButton:SetText("Select Frame")
-    -- Restore original WorldFrame OnMouseDown
-    if originalWorldFrameOnMouseDown then
-        WorldFrame:SetScript("OnMouseDown", originalWorldFrameOnMouseDown)
-        originalWorldFrameOnMouseDown = nil
-    end
+
+    if poller then poller:Hide() end
+
+    -- Restore original WorldFrame OnMouseDown. Note the original is usually nil,
+    -- so this has to be unconditional - keying it off a truthy check would leave
+    -- our handler installed forever.
+    WorldFrame:SetScript("OnMouseDown", originalWorldFrameOnMouseDown)
+    originalWorldFrameOnMouseDown = nil
+
+    -- Release the keyboard. A frame with an OnKeyDown script and propagation
+    -- turned off swallows every key it receives, so leaving this installed after
+    -- the picker exits breaks typing while the panel is up.
+    panel:SetScript("OnKeyDown", nil)
+    panel:EnableKeyboard(false)
+    panel:SetPropagateKeyboardInput(true)
 end
 
 -- Position the highlight frame to exactly cover the target frame using
@@ -228,7 +250,7 @@ local function PositionHighlight(target)
 end
 
 -- Polling frame for cursor tracking (no mouse capture, doesn't block anything)
-local poller = CreateFrame("Frame")
+poller = CreateFrame("Frame")
 poller:Hide()
 poller:SetScript("OnUpdate", function()
     if not isSelecting then return end
@@ -258,7 +280,6 @@ selectButton:SetScript("OnClick", function()
 
         local target = currentTarget
         StopSelecting()
-        poller:Hide()
 
         if not target then
             statusText:SetText("|cffff5555No frame under cursor.|r")
@@ -274,17 +295,17 @@ selectButton:SetScript("OnClick", function()
         TrySetFrameByName(name)
     end)
 
-    -- Hook Escape key via the panel's key handling
+    -- Escape cancels. The frame has to actually accept keyboard input to see the
+    -- key at all, and propagation must stay ON so every other key still reaches
+    -- chat and the rest of the UI while the picker is armed. StopSelecting tears
+    -- all of this back down.
+    panel:EnableKeyboard(true)
     panel:SetPropagateKeyboardInput(true)
     panel:SetScript("OnKeyDown", function(self, key)
         if not isSelecting then return end
         if key == "ESCAPE" then
             StopSelecting()
-            poller:Hide()
             statusText:SetText("Selection cancelled.")
-            self:SetPropagateKeyboardInput(false)
-        else
-            self:SetPropagateKeyboardInput(true)
         end
     end)
 end)
@@ -302,10 +323,15 @@ end)
 -- Register with the Settings UI
 -- -----------------------------------------------------------------
 local category = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
-category.ID = ADDON_NAME
+
+-- DO NOT set `category.ID`. It looks like a way to give the category a friendly
+-- name, but `SettingsCategoryMixin:Init` assigns `self.ID = idCounter()` - a
+-- NUMBER that the Settings registry uses to find this category
+-- (Blizzard_Category.lua:8-14). Overwriting it with the addon name orphaned the
+-- category for the whole session, so nothing could open it.
 Settings.RegisterAddOnCategory(category)
 
--- Expose the category globally so the slash command can open it reliably
--- (Settings.OpenToCategory works best with the category object, not just the ID string)
+-- Exposed for the slash command. It must pass `:GetID()`, not this table -
+-- see the comment on the handler in CastQueueOverlay.lua.
 CastQueueOverlayOptionsCategory = category
 CastQueueOverlaySettingsCategory = category

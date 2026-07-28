@@ -247,36 +247,21 @@ f:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_UPDATE", "player")
 f:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_STOP", "player")
 
 -- ---------------------------------------------------------------------
--- Slash command: "/cqo" opens the options panel, "/cqo r g b a" is a
--- quick passthrough for color/alpha without opening the UI.
+-- Slash command: "/cqo" opens the options panel. That is all it does -
+-- arguments were removed deliberately, everything is configured in the panel.
 -- ---------------------------------------------------------------------
 SLASH_CASTQUEUEOVERLAY1 = "/cqo"
-SlashCmdList["CASTQUEUEOVERLAY"] = function(msg)
-    msg = msg and strtrim(msg) or ""
-
-    if msg == "" then
-        -- Open via the category object; more reliable than the string ID.
-        -- The pre-10.0 InterfaceOptionsFrame_OpenToCategory fallback was removed:
-        -- it has zero references in both the generated API docs and the whole of
-        -- Blizzard's 12.0.7 UI source, so that branch could never have run.
-        if CastQueueOverlayOptionsCategory then
-            Settings.OpenToCategory(CastQueueOverlayOptionsCategory)
-            Settings.OpenToCategory(CastQueueOverlayOptionsCategory)
-        else
-            print("|cff33ff99CastQueueOverlay:|r options panel failed to register - check for Lua errors (/console scriptErrors 1).")
-        end
+SlashCmdList["CASTQUEUEOVERLAY"] = function()
+    -- `Settings.OpenToCategory` forwards straight to
+    -- `C_SettingsUtil.OpenSettingsPanel(openToCategoryID)`, whose argument is
+    -- typed `number` (Blizzard_Settings.lua:143). Passing the category TABLE
+    -- raises a Lua error, and because the chat box calls slash handlers
+    -- unprotected, that error aborts ChatEditBox:ParseText before it reaches
+    -- `self:ClearChat()` (ChatFrameEditBox.lua:259-262) - which is why Enter
+    -- appeared to do nothing at all. Pass the numeric ID.
+    if not CastQueueOverlayOptionsCategory then
+        print("|cff33ff99CastQueueOverlay:|r options panel failed to register - check for Lua errors (/console scriptErrors 1).")
         return
     end
-
-    local r, g, b, a = strsplit(" ", msg)
-    r, g, b, a = tonumber(r), tonumber(g), tonumber(b), tonumber(a)
-    if r and g and b and a then
-        CastQueueOverlayDB.r, CastQueueOverlayDB.g, CastQueueOverlayDB.b, CastQueueOverlayDB.a = r, g, b, a
-        print("|cff33ff99CastQueueOverlay:|r color set to", r, g, b, a)
-        addon.Refresh()
-        if addon.OnColorChangedExternally then addon.OnColorChangedExternally() end
-    else
-        print("|cff33ff99CastQueueOverlay:|r usage: /cqo <r> <g> <b> <a>  (each 0-1), or /cqo alone to open options.")
-        print("current SpellQueueWindow:", GetCVar("SpellQueueWindow") .. "ms")
-    end
+    Settings.OpenToCategory(CastQueueOverlayOptionsCategory:GetID())
 end
