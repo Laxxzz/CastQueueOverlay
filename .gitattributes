@@ -11,3 +11,10 @@
 *.zip binary
 *.rar binary
 *.7z  binary
+
+# Screenshots. `* text=auto` above already detects binaries, but being explicit
+# means no chance of a line-ending filter ever touching them.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary

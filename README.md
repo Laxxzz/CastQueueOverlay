@@ -6,7 +6,7 @@ the slice at the end of a cast during which your next spell is already accepted.
 
 Retail only. Built and tested against **12.0.7 (Midnight)**, `## Interface: 120007`.
 
-![overlay concept](https://img.shields.io/badge/Interface-120007-D97757)
+![Interface 120007](https://img.shields.io/badge/Interface-120007-D97757)
 
 ## What it draws
 
@@ -24,6 +24,29 @@ the same 400ms window covers proportionally more of a fast cast than a slow one.
 
 When several are enabled they are drawn stacked, widest underneath, so a wider
 band never hides a narrower one.
+
+### In game
+
+<p align="center">
+  <img src="media/overlay-in-game-1.png" width="380" alt="Overlay bands on a Regrowth cast bar">
+  <img src="media/overlay-in-game-2.png" width="380" alt="Overlay bands on a cast bar, wider view">
+</p>
+
+### Options
+
+A tab per overlay, each with its own colour, opacity and enable toggle. The
+SpellQueueWindow and Latency tabs show the value they currently resolve to, so
+you can see what is actually being drawn.
+
+<p align="center">
+  <img src="media/options-spellqueuewindow.png" width="270" alt="SpellQueueWindow tab">
+  <img src="media/options-latency.png" width="270" alt="Latency tab">
+  <img src="media/options-custom.png" width="270" alt="Custom tab with a millisecond value">
+</p>
+
+<p align="center">
+  <img src="media/options-window.gif" width="420" alt="Switching between the overlay tabs">
+</p>
 
 ## Usage
 
