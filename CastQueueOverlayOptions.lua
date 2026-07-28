@@ -203,17 +203,42 @@ local function RegionName(region)
     return nil
 end
 
+-- A widget's size is SECRET when the addon that owns it derived that size from
+-- secret data - EllesmereUIResourceBars sizes bar textures this way. Reading the
+-- value back is fine; ORDERED COMPARISON on it throws:
+--
+--   attempt to compare local 'w' (a secret number value, while execution
+--   tainted by 'CastQueueOverlay')
+--
+-- Truthiness is safe (`not w` on a secret is fine, which is why the old guard
+-- got as far as the `<=`), and arithmetic is safe but propagates secrecy - so a
+-- secret width silently poisons `area` and blows up later in table.sort instead,
+-- far from the cause. Screen this out at the source.
+--
+-- Unknown is treated as secret on purpose: declining to rank a region is always
+-- safe, comparing a secret never is.
+local function IsSecret(value)
+    if not issecretvalue then return false end
+    local ok, secret = pcall(issecretvalue, value)
+    if not ok then return true end
+    return secret
+end
+
 -- Size in UIParent-space. A region's own width/height are in ITS coordinate
 -- system, so they have to be scaled before being compared to anything else.
 local function NormalisedSize(region)
     local ok, w, h = pcall(function() return region:GetWidth(), region:GetHeight() end)
-    if not ok or not w or not h or w <= 0 or h <= 0 then return nil end
+    if not ok or not w or not h then return nil end
+    if IsSecret(w) or IsSecret(h) then return nil end
+    if w <= 0 or h <= 0 then return nil end
 
     local scale = 1
     if region.GetEffectiveScale then
         local ok2, s = pcall(region.GetEffectiveScale, region)
         local parentScale = UIParent:GetEffectiveScale()
-        if ok2 and s and parentScale and parentScale > 0 then
+        -- A secret scale would make the returned size secret too, and the poison
+        -- would only surface when the sort compares areas.
+        if ok2 and s and not IsSecret(s) and parentScale and parentScale > 0 then
             scale = s / parentScale
         end
     end
@@ -281,9 +306,13 @@ local function CollectCandidates()
     -- it cannot silently rot if that ordering ever changes.
     candidates = {}
     for _, region in ipairs(stack) do
-        if not IsUselessPick(region) and not CoversScreen(region) then
+        -- Name first: it is cheap, cannot involve secrets, and discards the
+        -- anonymous inner textures that make up most of a stack - which is
+        -- exactly where secret sizes live. CoversScreen does size maths, so it
+        -- must not run on regions we were going to reject anyway.
+        if not IsUselessPick(region) then
             local name = RegionName(region)
-            if name then
+            if name and not CoversScreen(region) then
                 local w, h = NormalisedSize(region)
                 if w then
                     candidates[#candidates + 1] = {
@@ -397,7 +426,9 @@ local function PositionHighlight(target)
 
     -- A zero-sized region would draw as an invisible outline, which reads as
     -- "the picker is broken" rather than "there is nothing to see here".
-    local w, h = target:GetWidth(), target:GetHeight()
+    -- NormalisedSize rather than raw GetWidth/GetHeight: this comparison hits the
+    -- same secret-value throw, and the highlight runs on every poll.
+    local w, h = NormalisedSize(target)
     if not ok or not w or not h or w <= 0 or h <= 0 then
         highlight:ClearAllPoints()
         highlight:Hide()
