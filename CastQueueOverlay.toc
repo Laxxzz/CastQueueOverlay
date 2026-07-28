@@ -1,7 +1,7 @@
 ## Interface: 120007
 ## Title: Cast Queue Overlay
 ## Notes: Shades the portion of your cast bar that falls within your current SpellQueueWindow.
-## Author: You
+## Author: Laxx
 ## Version: 1.2
 ## SavedVariables: CastQueueOverlayDB
 
