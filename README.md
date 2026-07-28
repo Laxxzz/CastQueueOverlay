@@ -68,9 +68,10 @@ Then `/reload` or restart the client.
 
 ## Development
 
-```powershell
-.\scripts\Test-WowAddon.ps1 "path\to\CastQueueOverlay"
-```
+This addon is linted with `Test-WowAddon.ps1` from a separate, private WoW API
+reference toolkit — it parse-checks with LuaJIT (the same Lua 5.1 dialect the
+game uses), validates the `.toc`, and resolves every API call against Blizzard's
+generated 12.0.7 documentation. That toolkit is not part of this repository.
 
 Linting is not testing — there is no way to execute addon code outside the game.
 A clean lint means the syntax parses and every API referenced exists in the
