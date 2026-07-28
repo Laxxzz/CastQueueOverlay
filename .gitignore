@@ -1,7 +1,7 @@
-# Claude Code local overrides — machine-specific, not shared.
-# .claude/settings.json IS tracked: it carries the project's permissions and the
-# additionalDirectories pointing at the API reference and the AddOns folder.
-.claude/settings.local.json
+# Claude Code config — machine-specific and not useful to anyone cloning this.
+# It carries absolute paths (and therefore a username) and local tool
+# permissions, so it stays out of a public repo entirely.
+.claude/
 
 # WoW writes saved variables to WTF\, never into the addon folder, so there is
 # nothing of the player's to exclude here. Listed only so the next person does
