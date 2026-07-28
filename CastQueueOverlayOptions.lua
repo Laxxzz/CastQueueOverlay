@@ -1,54 +1,112 @@
--- CastQueueOverlay options panel: color picker + frame selection (manual
--- entry or click-to-pick).
+-- CastQueueOverlay options: a standalone window, not a Settings canvas panel.
+--
+-- It lives outside Blizzard's Settings UI on purpose. `Settings.OpenToCategory`
+-- forwards to `C_SettingsUtil.OpenSettingsPanel`, which is PROTECTED
+-- (`HasRestrictions = true`), so `/cqo` in combat produced:
+--
+--   [ADDON_ACTION_BLOCKED] AddOn 'CastQueueOverlay' tried to call the protected
+--   function 'OpenSettingsPanel()'.
+--
+-- A frame we create ourselves carries no such restriction, so this opens in
+-- combat. The Settings entry still exists, but only as a button that hands off
+-- to this window.
 
 local ADDON_NAME = ...
 
 -- The namespace guard MUST be repeated in every file that touches it. A `local`
--- captures the value at this instant, so if this file loads first (it does - see
--- the TOC) and the table does not exist yet, `addon` would capture nil forever,
--- and the first `function addon.X()` below would throw and abort this whole file.
+-- captures the value at this instant, so if this file loads first and the table
+-- does not exist yet, `addon` would capture nil forever.
 CastQueueOverlay = CastQueueOverlay or {}
 local addon = CastQueueOverlay
+local S = addon.Style
 
-local panel = CreateFrame("Frame")
-panel.name = "Cast Queue Overlay"
+-- ---------------------------------------------------------------------
+-- Window
+-- ---------------------------------------------------------------------
+-- Height leaves room for statusText to wrap to two lines without colliding with
+-- the hint pinned to the bottom edge.
+local WINDOW_W, WINDOW_H = 460, 368
+local PAD = 20
 
-local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-title:SetPoint("TOPLEFT", 16, -16)
+local win = CreateFrame("Frame", "CastQueueOverlayOptionsFrame", UIParent)
+win:SetSize(WINDOW_W, WINDOW_H)
+win:SetPoint("CENTER")
+win:SetFrameStrata("DIALOG")
+win:SetToplevel(true)
+win:EnableMouse(true)   -- also stops clicks falling through to the world
+win:SetMovable(true)
+win:SetClampedToScreen(true)
+win:RegisterForDrag("LeftButton")
+win:SetScript("OnDragStart", win.StartMoving)
+win:SetScript("OnDragStop", win.StopMovingOrSizing)
+win:Hide()
+
+S.Fill(win, S.color.canvas)
+S.Border(win, S.color.border)
+
+-- Title bar: a coral hairline under the title is the whole accent budget for the
+-- window chrome. Anything more and it stops reading as an editor.
+local titleBar = CreateFrame("Frame", nil, win)
+titleBar:SetPoint("TOPLEFT")
+titleBar:SetPoint("TOPRIGHT")
+titleBar:SetHeight(44)
+
+local title = titleBar:CreateFontString(nil, "OVERLAY")
+title:SetFontObject(S.fontTitle)
+title:SetPoint("LEFT", PAD, 0)
 title:SetText("Cast Queue Overlay")
 
-local subtitle = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
-subtitle:SetWidth(500)
-subtitle:SetJustifyH("LEFT")
-subtitle:SetText("Shades the trailing portion of your cast bar that falls within your current SpellQueueWindow.")
+local titleRule = win:CreateTexture(nil, "ARTWORK")
+titleRule:SetColorTexture(S.Unpack(S.color.accent))
+titleRule:SetHeight(1)
+titleRule:SetPoint("TOPLEFT", titleBar, "BOTTOMLEFT", PAD, 0)
+titleRule:SetWidth(28)
 
--- -----------------------------------------------------------------
--- Color picker
--- -----------------------------------------------------------------
-local colorLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-colorLabel:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", 0, -24)
-colorLabel:SetText("Overlay color")
+local titleRuleRest = win:CreateTexture(nil, "ARTWORK")
+titleRuleRest:SetColorTexture(S.Unpack(S.color.border))
+titleRuleRest:SetHeight(1)
+titleRuleRest:SetPoint("TOPLEFT", titleRule, "TOPRIGHT", 0, 0)
+titleRuleRest:SetPoint("TOPRIGHT", titleBar, "BOTTOMRIGHT", -PAD, 0)
 
-local swatch = CreateFrame("Button", nil, panel, "BackdropTemplate")
-swatch:SetSize(24, 24)
-swatch:SetPoint("LEFT", colorLabel, "RIGHT", 12, 0)
-swatch:SetBackdrop({
-    bgFile = "Interface/Buttons/WHITE8x8",
-    edgeFile = "Interface/Buttons/WHITE8x8",
-    edgeSize = 1,
-})
-swatch:SetBackdropColor(0, 0, 0, 1)
-swatch:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+local closeBtn = S.Button(win, "X", 24, 24)
+closeBtn:SetPoint("TOPRIGHT", -PAD + 4, -10)
+closeBtn:SetScript("OnClick", function() win:Hide() end)
 
-local swatchTex = swatch:CreateTexture(nil, "ARTWORK")
-swatchTex:SetPoint("TOPLEFT", 2, -2)
-swatchTex:SetPoint("BOTTOMRIGHT", -2, 2)
+-- ESC closes the window. While the frame picker is armed our OnKeyDown consumes
+-- ESCAPE first, so it cancels picking instead - which is the behaviour you want.
+tinsert(UISpecialFrames, "CastQueueOverlayOptionsFrame")
+
+-- ---------------------------------------------------------------------
+-- Overlay colour
+-- ---------------------------------------------------------------------
+local colorHeading = S.Heading(win, "OVERLAY COLOUR")
+colorHeading:SetPoint("TOPLEFT", PAD, -60)
+colorHeading.Rule:SetPoint("RIGHT", win, "RIGHT", -PAD, 0)
+
+local swatchHolder = S.Inset(win)
+swatchHolder:SetSize(52, 26)
+swatchHolder:SetPoint("TOPLEFT", colorHeading, "BOTTOMLEFT", 0, -12)
+
+local swatchTex = swatchHolder:CreateTexture(nil, "ARTWORK")
+swatchTex:SetPoint("TOPLEFT", 3, -3)
+swatchTex:SetPoint("BOTTOMRIGHT", -3, 3)
 swatchTex:SetColorTexture(1, 1, 1, 1)
+
+local swatchBtn = CreateFrame("Button", nil, swatchHolder)
+swatchBtn:SetAllPoints(swatchHolder)
+
+local colorValue = win:CreateFontString(nil, "OVERLAY")
+colorValue:SetFontObject(S.fontSmall)
+colorValue:SetPoint("LEFT", swatchHolder, "RIGHT", 12, 0)
 
 local function UpdateSwatch()
     local c = CastQueueOverlayDB
-    swatchTex:SetVertexColor(c.r, c.g, c.b, c.a)
+    swatchTex:SetColorTexture(c.r, c.g, c.b, 1)
+    colorValue:SetText(("#%02X%02X%02X   %d%% opacity"):format(
+        math.floor(c.r * 255 + 0.5),
+        math.floor(c.g * 255 + 0.5),
+        math.floor(c.b * 255 + 0.5),
+        math.floor((c.a or 0) * 100 + 0.5)))
 end
 
 local function OnColorChanged()
@@ -59,7 +117,7 @@ local function OnColorChanged()
     addon.Refresh()
 end
 
-swatch:SetScript("OnClick", function()
+swatchBtn:SetScript("OnClick", function()
     local c = CastQueueOverlayDB
     -- Snapshot by value. `c` is the same table as CastQueueOverlayDB, so it is
     -- mutated live by swatchFunc while the picker is open and cannot serve as a
@@ -70,8 +128,8 @@ swatch:SetScript("OnClick", function()
         swatchFunc = OnColorChanged,
         opacityFunc = OnColorChanged,
         cancelFunc = function(prev)
-            -- ColorPickerFrame builds this as {r=, g=, b=, a=} - note alpha is
-            -- passed IN as `opacity` but comes BACK as `a`.
+            -- ColorPickerFrame builds this as {r=, g=, b=, a=} - alpha is passed
+            -- IN as `opacity` but comes BACK as `a`.
             CastQueueOverlayDB.r = (prev and prev.r) or prevR
             CastQueueOverlayDB.g = (prev and prev.g) or prevG
             CastQueueOverlayDB.b = (prev and prev.b) or prevB
@@ -85,96 +143,82 @@ swatch:SetScript("OnClick", function()
     })
 end)
 
--- Let the /cqo slash command's quick color set keep the swatch in sync
--- if the panel happens to be open.
 function addon.OnColorChangedExternally()
     UpdateSwatch()
 end
 
--- -----------------------------------------------------------------
--- Current frame: name field + manual entry
--- -----------------------------------------------------------------
-local frameLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-frameLabel:SetPoint("TOPLEFT", colorLabel, "BOTTOMLEFT", 0, -32)
-frameLabel:SetText("Cast bar frame (global frame name)")
+-- ---------------------------------------------------------------------
+-- Cast bar frame
+-- ---------------------------------------------------------------------
+local frameHeading = S.Heading(win, "CAST BAR FRAME")
+frameHeading:SetPoint("TOPLEFT", swatchHolder, "BOTTOMLEFT", 0, -28)
+frameHeading.Rule:SetPoint("RIGHT", win, "RIGHT", -PAD, 0)
 
-local editBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
-editBox:SetSize(240, 20)
-editBox:SetAutoFocus(false)
-editBox:SetPoint("TOPLEFT", frameLabel, "BOTTOMLEFT", 6, -8)
+local editHolder, editBox = S.EditBox(win, 268, 26)
+editHolder:SetPoint("TOPLEFT", frameHeading, "BOTTOMLEFT", 0, -12)
 
-local okButton = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-okButton:SetSize(60, 22)
-okButton:SetText("Okay")
-okButton:SetPoint("LEFT", editBox, "RIGHT", 8, 0)
+local applyBtn = S.Button(win, "Apply", 76, 26, true)
+applyBtn:SetPoint("LEFT", editHolder, "RIGHT", 10, 0)
 
--- Anchored further down, once selectButton and the live picker readout exist.
--- It is positioned last on purpose: it wraps, so its height changes with the
--- message, and anything anchored below it would jump around.
-local statusText = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-statusText:SetWidth(420)
+local statusText = win:CreateFontString(nil, "OVERLAY")
+statusText:SetFontObject(S.fontSmall)
+statusText:SetWidth(WINDOW_W - PAD * 2)
 statusText:SetJustifyH("LEFT")
 
 local function TrySetFrameByName(name)
     name = name and strtrim(name)
     if not name or name == "" then
-        statusText:SetText("|cffff5555Enter a frame name.|r")
+        statusText:SetText(S.Colorize(S.color.bad, "Enter a frame name."))
         return
     end
     if not _G[name] then
-        statusText:SetText("|cffff5555No frame named '" .. name .. "' exists.|r")
+        statusText:SetText(S.Colorize(S.color.bad, "No frame named '" .. name .. "' exists."))
         return
     end
     if addon.SetCastBarByName(name) then
-        statusText:SetText("|cff33ff99Cast bar set to " .. name .. ".|r")
+        statusText:SetText(S.Colorize(S.color.good, "Cast bar set to " .. name .. "."))
     else
-        statusText:SetText("|cffff5555'" .. name .. "' isn't a usable frame.|r")
+        statusText:SetText(S.Colorize(S.color.bad, "'" .. name .. "' isn't a usable frame."))
     end
 end
 
-okButton:SetScript("OnClick", function() TrySetFrameByName(editBox:GetText()) end)
+applyBtn:SetScript("OnClick", function() TrySetFrameByName(editBox:GetText()) end)
 editBox:SetScript("OnEnterPressed", function(self)
     TrySetFrameByName(self:GetText())
     self:ClearFocus()
 end)
 editBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
 
--- Called by the core file whenever the cast bar frame changes, so the
--- field always reflects reality (including changes made via /cqo or the
--- picker below).
 function addon.OnCastBarChanged(name)
     editBox:SetText(name or "")
 end
 
--- -----------------------------------------------------------------
+-- ---------------------------------------------------------------------
 -- Click-to-select frame picker
--- -----------------------------------------------------------------
-local selectButton = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-selectButton:SetSize(140, 22)
-selectButton:SetText("Select Frame")
-selectButton:SetPoint("TOPLEFT", editBox, "BOTTOMLEFT", 0, -16)
+-- ---------------------------------------------------------------------
+local selectButton = S.Button(win, "Select Frame", 140, 26)
+selectButton:SetPoint("TOPLEFT", editHolder, "BOTTOMLEFT", 0, -16)
 
--- Live readout of what is under the cursor while picking. This shows the frame
--- that clicking would actually select, not merely the topmost region, so the
--- label, the green outline and the result of a click always agree.
-local pickerText = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-pickerText:SetPoint("TOPLEFT", selectButton, "BOTTOMLEFT", 0, -10)
-pickerText:SetWidth(420)
+local readoutHolder = S.Inset(win)
+readoutHolder:SetSize(WINDOW_W - PAD * 2, 26)
+readoutHolder:SetPoint("TOPLEFT", selectButton, "BOTTOMLEFT", 0, -12)
+
+local pickerText = readoutHolder:CreateFontString(nil, "OVERLAY")
+pickerText:SetFontObject(S.fontSmall)
+pickerText:SetPoint("LEFT", 8, 0)
+pickerText:SetPoint("RIGHT", -8, 0)
 pickerText:SetJustifyH("LEFT")
 pickerText:SetText("")
 
-statusText:SetPoint("TOPLEFT", pickerText, "BOTTOMLEFT", 0, -10)
+statusText:SetPoint("TOPLEFT", readoutHolder, "BOTTOMLEFT", 0, -12)
 
 -- Green outline drawn around whatever frame is currently under the cursor.
-local highlight = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-highlight:SetBackdrop({
-    edgeFile = "Interface/Buttons/WHITE8x8",
-    edgeSize = 2,
-})
-highlight:SetBackdropBorderColor(0, 1, 0, 1)
+local highlight = CreateFrame("Frame", nil, UIParent)
 highlight:SetFrameStrata("TOOLTIP")
 highlight:EnableMouse(false)
 highlight:Hide()
+local highlightBorder = S.Border(highlight, S.color.accent, "OVERLAY")
+highlightBorder:SetColor(S.color.accent)
 
 -- We don't use a full-screen catcher frame (it blocks mouse events).
 -- Instead we poll C_System.GetFrameStack() on an OnUpdate. For click detection,
@@ -185,15 +229,12 @@ local isSelecting = false
 local originalWorldFrameOnMouseDown
 local poller -- created below; forward-declared so StopSelecting can stop it
 
--- Frames that are under the cursor almost everywhere and are never what anyone
--- means to pick. UIParent in particular was the whole problem: it is the common
--- ancestor of nearly everything, so walking up from an anonymous region landed
--- on it constantly.
 local function IsUselessPick(region)
     return region == nil
         or region == highlight
         or region == UIParent
         or region == WorldFrame
+        or region == win
 end
 
 local function RegionName(region)
@@ -204,19 +245,15 @@ local function RegionName(region)
 end
 
 -- A widget's size is SECRET when the addon that owns it derived that size from
--- secret data - EllesmereUIResourceBars sizes bar textures this way. Reading the
--- value back is fine; ORDERED COMPARISON on it throws:
+-- secret data. Reading it back is fine; ORDERED COMPARISON on it throws:
 --
 --   attempt to compare local 'w' (a secret number value, while execution
 --   tainted by 'CastQueueOverlay')
 --
--- Truthiness is safe (`not w` on a secret is fine, which is why the old guard
--- got as far as the `<=`), and arithmetic is safe but propagates secrecy - so a
--- secret width silently poisons `area` and blows up later in table.sort instead,
--- far from the cause. Screen this out at the source.
---
--- Unknown is treated as secret on purpose: declining to rank a region is always
--- safe, comparing a secret never is.
+-- Truthiness is safe, and arithmetic is safe but PROPAGATES - so a secret width
+-- silently poisons a computed area and explodes later inside table.sort instead,
+-- far from the cause. Unknown is treated as secret on purpose: declining to rank
+-- a region is always safe, comparing a secret never is.
 local function IsSecret(value)
     if not issecretvalue then return false end
     local ok, secret = pcall(issecretvalue, value)
@@ -224,8 +261,6 @@ local function IsSecret(value)
     return secret
 end
 
--- Size in UIParent-space. A region's own width/height are in ITS coordinate
--- system, so they have to be scaled before being compared to anything else.
 local function NormalisedSize(region)
     local ok, w, h = pcall(function() return region:GetWidth(), region:GetHeight() end)
     if not ok or not w or not h then return nil end
@@ -236,8 +271,6 @@ local function NormalisedSize(region)
     if region.GetEffectiveScale then
         local ok2, s = pcall(region.GetEffectiveScale, region)
         local parentScale = UIParent:GetEffectiveScale()
-        -- A secret scale would make the returned size secret too, and the poison
-        -- would only surface when the sort compares areas.
         if ok2 and s and not IsSecret(s) and parentScale and parentScale > 0 then
             scale = s / parentScale
         end
@@ -245,11 +278,6 @@ local function NormalisedSize(region)
     return w * scale, h * scale
 end
 
--- Full-screen overlays are never what someone is pointing AT, but they sit on
--- top of everything and win any "topmost" contest. Concrete case:
--- EllesmereUIQoL's cursor-trail parent ECL_TrailContainer is SetAllPoints(UIParent)
--- at TOOLTIP strata, frame level 9998 (EllesmereUIQoL_Cursor.lua:148-153), so it
--- was returned for every single hover.
 local SCREEN_COVER_RATIO = 0.95
 
 local function CoversScreen(region)
@@ -260,56 +288,30 @@ local function CoversScreen(region)
     return w >= pw * SCREEN_COVER_RATIO and h >= ph * SCREEN_COVER_RATIO
 end
 
--- Decorative overlays live at TOOLTIP strata. Blizzard treats that strata as a
--- special case itself (Menu.lua:2121). EllesmereUIQoL alone puts four
--- mouse-disabled decorations there - ECL_TrailContainer, ECL_GCDRoot,
--- ECL_CastRoot and EllesmereUICursorFrame, the last of which FOLLOWS the cursor
--- and so is both tiny and always under it. No size or depth heuristic survives
--- that, which is why these are demoted rather than excluded: demoting keeps them
--- reachable if someone genuinely wants one, and excluding by name would just
--- start an arms race with every UI suite.
+-- Decorative overlays live at TOOLTIP strata. EllesmereUIQoL alone puts four
+-- mouse-disabled decorations there, one of which FOLLOWS the cursor and so is
+-- both tiny and always under it. Demoted rather than excluded: excluding by name
+-- would start an arms race with every UI suite.
 local function IsDecorative(region)
     if not region.GetFrameStrata then return false end
     local ok, strata = pcall(region.GetFrameStrata, region)
     return ok and strata == "TOOLTIP"
 end
 
--- Rebuilt each poll. Ranked best-guess first, but the user can cycle, because no
--- ranking is going to be right for every UI.
 local candidates = {}
 local candidateIndex = 1
 
 local function CollectCandidates()
-    -- GetMouseFoci() was the wrong primitive and is why the picker kept landing
-    -- on WorldFrame. It only reports regions with mouse input ENABLED; cast bars
-    -- and most display-only frames call EnableMouse(false), so they are never in
-    -- that list, and with nothing else eligible the cursor resolves to WorldFrame
-    -- across most of the screen.
-    --
+    -- GetMouseFoci() only reports regions with mouse input ENABLED; cast bars
+    -- call EnableMouse(false), so they never appear in it.
     -- C_System.GetFrameStack() returns every region under the cursor regardless
-    -- of mouse state - it is what Blizzard's own /framestack is built on
-    -- (SlashCommands.lua:1350, Blizzard_DebugTools.lua:140).
+    -- (SlashCommands.lua:1350).
     local stack = C_System and C_System.GetFrameStack and C_System.GetFrameStack() or {}
 
-    -- Search the stack itself for something NAMED rather than taking the topmost
-    -- region and walking up its parents. Most regions under the cursor are
-    -- anonymous textures and inner bars; a parent-walk escapes straight to
-    -- UIParent for nearly all of them. A sibling in the stack is a far better
-    -- answer than a distant ancestor, and it can only ever return something the
-    -- cursor is genuinely over.
-    --
-    -- Of those candidates, take the SMALLEST rather than the topmost. Stack order
-    -- is confirmed topmost-first, but topmost is the wrong question: a
-    -- screen-covering overlay is always topmost and never the intended target,
-    -- while the thing you are actually pointing at is the most specific region
-    -- containing the cursor. Smallest-area is also independent of stack order, so
-    -- it cannot silently rot if that ordering ever changes.
     candidates = {}
     for _, region in ipairs(stack) do
-        -- Name first: it is cheap, cannot involve secrets, and discards the
-        -- anonymous inner textures that make up most of a stack - which is
-        -- exactly where secret sizes live. CoversScreen does size maths, so it
-        -- must not run on regions we were going to reject anyway.
+        -- Name first: cheap, cannot involve secrets, and discards the anonymous
+        -- inner textures that are most of a stack and where secret sizes live.
         if not IsUselessPick(region) then
             local name = RegionName(region)
             if name and not CoversScreen(region) then
@@ -326,86 +328,22 @@ local function CollectCandidates()
         end
     end
 
-    -- Real UI first, then most specific. Sorting rather than picking means a
-    -- wrong guess costs a keypress instead of a bug report.
     table.sort(candidates, function(a, b)
         if a.decorative ~= b.decorative then return b.decorative end
         if a.area ~= b.area then return a.area < b.area end
-        return a.name < b.name -- stable, so the list does not jitter while hovering
+        return a.name < b.name -- total order, so the list cannot jitter
     end)
-
-    if #candidates > 0 then return end
-
-    -- Nothing in the stack is named. Fall back to a bounded parent walk from the
-    -- topmost usable region, stopping BEFORE the catch-alls so a miss reports as
-    -- a miss instead of silently selecting UIParent.
-    for _, region in ipairs(stack) do
-        if not IsUselessPick(region) and not CoversScreen(region) then
-            local node = region
-            while node and not IsUselessPick(node) do
-                local name = RegionName(node)
-                -- Same exclusion on the way up: a screen-covering ancestor is no
-                -- more useful than a screen-covering sibling.
-                if name and not CoversScreen(node) then
-                    local w, h = NormalisedSize(node)
-                    candidates[1] = {
-                        region = node,
-                        name = name,
-                        area = (w and h) and (w * h) or 0,
-                        decorative = IsDecorative(node),
-                    }
-                    return
-                end
-                local ok, parent = pcall(node.GetParent, node)
-                node = ok and parent or nil
-            end
-            break
-        end
-    end
 end
 
 local function CurrentCandidate()
     if #candidates == 0 then return nil, nil end
-    -- Clamp rather than reset. The set changes constantly as the cursor moves, and
-    -- resetting to 1 on every change would make cycling impossible to hold onto.
+    -- Clamp rather than reset: the set changes constantly under a moving cursor.
     if candidateIndex > #candidates then candidateIndex = #candidates end
     if candidateIndex < 1 then candidateIndex = 1 end
     local entry = candidates[candidateIndex]
     return entry.region, entry.name
 end
 
--- Every exit path must go through here. Selecting installs three things - a
--- WorldFrame script, an OnUpdate poller and a keyboard grab - and leaking any
--- one of them outlives the picker.
-local function StopSelecting()
-    isSelecting = false
-    highlight:Hide()
-    currentTarget = nil
-    selectButton:SetText("Select Frame")
-
-    if poller then poller:Hide() end
-    currentTargetName = nil
-    pickerText:SetText("")
-    candidates = {}
-    candidateIndex = 1
-
-    -- Restore original WorldFrame OnMouseDown. Note the original is usually nil,
-    -- so this has to be unconditional - keying it off a truthy check would leave
-    -- our handler installed forever.
-    WorldFrame:SetScript("OnMouseDown", originalWorldFrameOnMouseDown)
-    originalWorldFrameOnMouseDown = nil
-
-    -- Release the keyboard. A frame with an OnKeyDown script and propagation
-    -- turned off swallows every key it receives, so leaving this installed after
-    -- the picker exits breaks typing while the panel is up.
-    panel:SetScript("OnKeyDown", nil)
-    panel:EnableKeyboard(false)
-    panel:SetPropagateKeyboardInput(true)
-end
-
--- Position the highlight frame to exactly cover the target frame using
--- absolute screen coordinates, since the highlight and target may have
--- different parents/strata.
 local function PositionHighlight(target)
     highlight:ClearAllPoints()
     if not target then
@@ -413,36 +351,48 @@ local function PositionHighlight(target)
         return
     end
 
-    -- Anchor directly to the target instead of converting GetRect() into
-    -- UIParent-space coordinates. GetRect returns values in the target's OWN
-    -- coordinate system, so any frame whose effective scale differs from
-    -- UIParent's - which is most of a custom UI, and all of EllesmereUI - was
-    -- outlined at the wrong place and size, or off-screen entirely. Anchoring
-    -- lets the engine resolve the scale difference.
+    -- Anchor directly to the target rather than converting GetRect() into
+    -- UIParent-space. GetRect returns values in the target's OWN coordinate
+    -- system, so anything at a different effective scale was outlined in the
+    -- wrong place. Anchoring lets the engine resolve scale.
     local ok = pcall(function()
         highlight:SetPoint("TOPLEFT", target, "TOPLEFT", 0, 0)
         highlight:SetPoint("BOTTOMRIGHT", target, "BOTTOMRIGHT", 0, 0)
     end)
 
-    -- A zero-sized region would draw as an invisible outline, which reads as
-    -- "the picker is broken" rather than "there is nothing to see here".
-    -- NormalisedSize rather than raw GetWidth/GetHeight: this comparison hits the
-    -- same secret-value throw, and the highlight runs on every poll.
     local w, h = NormalisedSize(target)
     if not ok or not w or not h or w <= 0 or h <= 0 then
         highlight:ClearAllPoints()
         highlight:Hide()
         return
     end
-
     highlight:Show()
 end
 
--- Polling frame for cursor tracking (no mouse capture, doesn't block anything)
-poller = CreateFrame("Frame")
-poller:Hide()
--- Walking the frame stack and sorting it every single frame is real work for no
--- benefit; the cursor cannot move meaningfully in 16ms.
+-- Every exit path must go through here. Selecting installs a WorldFrame script,
+-- an OnUpdate poller and a keyboard grab; leaking any one outlives the picker.
+local function StopSelecting()
+    isSelecting = false
+    highlight:Hide()
+    currentTarget = nil
+    currentTargetName = nil
+    selectButton:SetLabel("Select Frame")
+
+    if poller then poller:Hide() end
+    pickerText:SetText("")
+    candidates = {}
+    candidateIndex = 1
+
+    -- The original is usually nil, so this must be unconditional - keying it off
+    -- a truthy check would leave our handler installed forever.
+    WorldFrame:SetScript("OnMouseDown", originalWorldFrameOnMouseDown)
+    originalWorldFrameOnMouseDown = nil
+
+    win:SetScript("OnKeyDown", nil)
+    win:EnableKeyboard(false)
+    win:SetPropagateKeyboardInput(true)
+end
+
 local POLL_INTERVAL = 0.1
 local sinceLastPoll = 0
 
@@ -455,18 +405,19 @@ local function RefreshPicker()
     PositionHighlight(target)
 
     if not name then
-        -- Genuinely nothing selectable here, rather than a silent UIParent.
-        pickerText:SetText("Under cursor: |cff999999(no named frame)|r")
+        pickerText:SetText(S.Colorize(S.color.textFaint, "no named frame under cursor"))
         return
     end
 
     local suffix = ""
     if #candidates > 1 then
-        suffix = ("  |cff999999(%d of %d - TAB to cycle)|r"):format(candidateIndex, #candidates)
+        suffix = S.Colorize(S.color.textFaint, ("   %d/%d  TAB to cycle"):format(candidateIndex, #candidates))
     end
-    pickerText:SetText("Under cursor: |cff33ff99" .. name .. "|r" .. suffix)
+    pickerText:SetText(S.Colorize(S.color.accent, name) .. suffix)
 end
 
+poller = CreateFrame("Frame")
+poller:Hide()
 poller:SetScript("OnUpdate", function(self, elapsed)
     if not isSelecting then return end
     sinceLastPoll = sinceLastPoll + elapsed
@@ -483,52 +434,42 @@ selectButton:SetScript("OnClick", function()
     isSelecting = true
     currentTarget = nil
     candidateIndex = 1
-    statusText:SetText("Click a frame in your UI to select it. TAB cycles overlapping frames, Esc cancels.")
-    selectButton:SetText("Selecting... (Esc to cancel)")
+    statusText:SetText(S.Colorize(S.color.textMuted, "Click a frame to select it. TAB cycles, Esc cancels."))
+    selectButton:SetLabel("Selecting...")
     poller:Show()
 
-    -- Hook WorldFrame for click detection (doesn't block other frames)
     originalWorldFrameOnMouseDown = WorldFrame:GetScript("OnMouseDown")
     WorldFrame:SetScript("OnMouseDown", function(self, button)
         if not isSelecting then return end
         if button ~= "LeftButton" then return end
 
-        -- Use the name the readout was already showing. Re-deriving it here is
-        -- what let the click disagree with the outline and the label.
+        -- Use the name the readout was already showing, so the label, the
+        -- outline and the result of a click can never disagree.
         local name = currentTargetName
         StopSelecting()
 
         if not name then
-            statusText:SetText("|cffff5555Nothing selectable there - no named frame under the cursor.|r")
+            statusText:SetText(S.Colorize(S.color.bad, "Nothing selectable there."))
             return
         end
-
         TrySetFrameByName(name)
     end)
 
-    -- Escape cancels. The frame has to actually accept keyboard input to see the
-    -- key at all, and propagation must stay ON so every other key still reaches
-    -- chat and the rest of the UI while the picker is armed. StopSelecting tears
-    -- all of this back down.
-    panel:EnableKeyboard(true)
-    panel:SetPropagateKeyboardInput(true)
-    -- TAB cycles rather than the mouse wheel: while picking, the cursor is over
+    -- TAB rather than the mouse wheel: while picking the cursor is over
     -- arbitrary frames, and catching the wheel globally would need the very
-    -- full-screen mouse-enabled catcher this design avoids. Keyboard input is
-    -- frame-local and works wherever the cursor happens to be.
-    --
-    -- Propagation is turned off for exactly the two keys we consume and left on
-    -- for everything else, so chat and the rest of the UI keep working.
-    panel:SetScript("OnKeyDown", function(self, key)
+    -- full-screen mouse-enabled catcher this design avoids. Propagation is
+    -- suppressed for exactly the two keys we consume.
+    win:EnableKeyboard(true)
+    win:SetPropagateKeyboardInput(true)
+    win:SetScript("OnKeyDown", function(self, key)
         if not isSelecting then
             self:SetPropagateKeyboardInput(true)
             return
         end
-
         if key == "ESCAPE" then
             self:SetPropagateKeyboardInput(false)
             StopSelecting()
-            statusText:SetText("Selection cancelled.")
+            statusText:SetText(S.Colorize(S.color.textMuted, "Selection cancelled."))
         elseif key == "TAB" then
             self:SetPropagateKeyboardInput(false)
             if #candidates > 1 then
@@ -542,28 +483,70 @@ selectButton:SetScript("OnClick", function()
     end)
 end)
 
--- -----------------------------------------------------------------
--- Keep the panel in sync whenever it's shown
--- -----------------------------------------------------------------
-panel:SetScript("OnShow", function()
+local hint = win:CreateFontString(nil, "OVERLAY")
+hint:SetFontObject(S.fontHint)
+hint:SetPoint("BOTTOMLEFT", PAD, PAD - 6)
+hint:SetPoint("BOTTOMRIGHT", -PAD, PAD - 6)
+hint:SetJustifyH("LEFT")
+hint:SetText("The overlay marks the trailing SpellQueueWindow portion of your cast bar.")
+
+-- ---------------------------------------------------------------------
+-- Show / hide
+-- ---------------------------------------------------------------------
+win:SetScript("OnShow", function()
     UpdateSwatch()
     editBox:SetText(addon.GetCastBarName())
     statusText:SetText("")
 end)
 
--- -----------------------------------------------------------------
--- Register with the Settings UI
--- -----------------------------------------------------------------
-local category = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
+-- Closing the window by any route must tear the picker down. Previously only
+-- Escape did: closing via the button left isSelecting true, so the outline kept
+-- tracking the cursor over a closed window, Escape did nothing because the
+-- keyboard grab had gone with the frame, and clicks did nothing because the
+-- WorldFrame hook was still installed but the panel could not respond.
+win:SetScript("OnHide", function()
+    if isSelecting then StopSelecting() end
+end)
 
--- DO NOT set `category.ID`. It looks like a way to give the category a friendly
--- name, but `SettingsCategoryMixin:Init` assigns `self.ID = idCounter()` - a
--- NUMBER that the Settings registry uses to find this category
--- (Blizzard_Category.lua:8-14). Overwriting it with the addon name orphaned the
--- category for the whole session, so nothing could open it.
+function addon.ToggleOptions()
+    if win:IsShown() then
+        win:Hide()
+    else
+        win:Show()
+    end
+end
+
+function addon.ShowOptions()
+    win:Show()
+end
+
+-- ---------------------------------------------------------------------
+-- Settings entry: a handoff button, nothing more
+-- ---------------------------------------------------------------------
+local stub = CreateFrame("Frame")
+stub.name = "Cast Queue Overlay"
+
+local stubText = stub:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+stubText:SetPoint("TOPLEFT", 16, -16)
+stubText:SetWidth(500)
+stubText:SetJustifyH("LEFT")
+stubText:SetText("Cast Queue Overlay uses its own options window, which also works during combat.")
+
+local stubButton = CreateFrame("Button", nil, stub, "UIPanelButtonTemplate")
+stubButton:SetSize(220, 24)
+stubButton:SetPoint("TOPLEFT", stubText, "BOTTOMLEFT", 0, -14)
+stubButton:SetText("Open Cast Queue Overlay options")
+stubButton:SetScript("OnClick", function()
+    -- Close Settings first so the two windows are never stacked.
+    if SettingsPanel and SettingsPanel:IsShown() then
+        HideUIPanel(SettingsPanel)
+    end
+    addon.ShowOptions()
+end)
+
+-- DO NOT set `category.ID`. SettingsCategoryMixin:Init assigns self.ID =
+-- idCounter(), a NUMBER the registry uses to find the category
+-- (Blizzard_Category.lua:8-14). Overwriting it orphans the category.
+local category = Settings.RegisterCanvasLayoutCategory(stub, stub.name)
 Settings.RegisterAddOnCategory(category)
-
--- Exposed for the slash command. It must pass `:GetID()`, not this table -
--- see the comment on the handler in CastQueueOverlay.lua.
 CastQueueOverlayOptionsCategory = category
-CastQueueOverlaySettingsCategory = category

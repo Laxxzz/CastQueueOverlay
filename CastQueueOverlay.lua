@@ -331,16 +331,17 @@ f:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_STOP", "player")
 -- ---------------------------------------------------------------------
 SLASH_CASTQUEUEOVERLAY1 = "/cqo"
 SlashCmdList["CASTQUEUEOVERLAY"] = function()
-    -- `Settings.OpenToCategory` forwards straight to
-    -- `C_SettingsUtil.OpenSettingsPanel(openToCategoryID)`, whose argument is
-    -- typed `number` (Blizzard_Settings.lua:143). Passing the category TABLE
-    -- raises a Lua error, and because the chat box calls slash handlers
-    -- unprotected, that error aborts ChatEditBox:ParseText before it reaches
-    -- `self:ClearChat()` (ChatFrameEditBox.lua:259-262) - which is why Enter
-    -- appeared to do nothing at all. Pass the numeric ID.
-    if not CastQueueOverlayOptionsCategory then
-        print("|cff33ff99CastQueueOverlay:|r options panel failed to register - check for Lua errors (/console scriptErrors 1).")
+    -- Opens our own frame. It deliberately does NOT go through
+    -- `Settings.OpenToCategory`, which forwards to the PROTECTED
+    -- `C_SettingsUtil.OpenSettingsPanel` and so was blocked in combat:
+    --
+    --   [ADDON_ACTION_BLOCKED] AddOn 'CastQueueOverlay' tried to call the
+    --   protected function 'OpenSettingsPanel()'.
+    --
+    -- A frame we own carries no restriction, so this works in combat.
+    if not addon.ToggleOptions then
+        print("|cff33ff99CastQueueOverlay:|r options window failed to load - check for Lua errors (/console scriptErrors 1).")
         return
     end
-    Settings.OpenToCategory(CastQueueOverlayOptionsCategory:GetID())
+    addon.ToggleOptions()
 end

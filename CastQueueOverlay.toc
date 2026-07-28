@@ -5,5 +5,6 @@
 ## Version: 1.2
 ## SavedVariables: CastQueueOverlayDB
 
+CastQueueOverlayStyle.lua
 CastQueueOverlayOptions.lua
 CastQueueOverlay.lua
