@@ -2,7 +2,7 @@
 ## Title: Cast Queue Overlay
 ## Notes: Adds coloured overlays to the end of your cast bar for spell queue window, latency and a custom value.
 ## Author: Laxx
-## Version: 2.1.0
+## Version: 2.2.0
 ## SavedVariables: CastQueueOverlayDB
 ## X-Curse-Project-ID: 1628899
 

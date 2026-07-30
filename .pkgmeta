@@ -6,6 +6,14 @@
 # 2.0.0 and 2.1.0.
 package-as: CastQueueOverlay
 
+# Use the hand-written changelog for both the GitHub release and the CurseForge
+# upload. Without this the packager generates notes from the commit messages
+# since the previous tag, which are written for maintainers and read as noise to
+# players. One file, one wording, both platforms.
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
+
 ignore:
   - .github
   - .gitattributes
@@ -13,4 +21,5 @@ ignore:
   - .pkgmeta
   - README.md
   - LICENSE
+  - CHANGELOG.md
   - media
