@@ -89,6 +89,7 @@ local overlays = {}   -- key -> texture
 local overlay          -- the queue texture; kept so EnsureOverlay can report success
 local castBar
 local activeStartMS, activeEndMS
+local activeDrainsLeft -- true while a draining channel is what is on the bar
 local hookedBars = {}   -- frames whose OnSizeChanged we have already hooked
 
 -- ---------------------------------------------------------------------
@@ -206,12 +207,32 @@ end
 -- ---------------------------------------------------------------------
 -- Core update logic
 -- ---------------------------------------------------------------------
-local function ApplyOverlay(startMS, endMS)
+-- `drainsLeft` says which end of the bar the cast FINISHES at, which is the end
+-- these overlays have to sit against.
+--
+-- A normal cast fills left to right - Blizzard sets `value = GetTime() -
+-- startTime` (CastingBarFrame.lua:446) - so it finishes at the right edge.
+--
+-- A channel is the other way round: `value = endTime - GetTime()`
+-- (CastingBarFrame.lua:448, and again in OnShow at :169), so the fill DRAINS
+-- right to left and the channel finishes at the LEFT edge. Anchoring right for a
+-- channel puts the overlay on the moment the channel started.
+--
+-- Empowered casts are the exception that makes this three-way rather than two:
+-- they arrive on the CHANNEL/EMPOWER events, but Blizzard fills them like a cast
+-- (`isChargeSpell` branch, CastingBarFrame.lua:445-446), so they finish at the
+-- right. "Is it a channel" is the wrong question; "which way does it fill" is
+-- the right one.
+--
+-- EllesmereUIResourceBars computes channels the same way
+-- (`(endTime - now) / duration`, EllesmereUIResourceBars.lua:6951), so this
+-- holds for the third-party bar too.
+local function ApplyOverlay(startMS, endMS, drainsLeft)
     local bar = EnsureOverlay()
     if not bar then return end
 
     if not startMS or not endMS then
-        activeStartMS, activeEndMS = nil, nil
+        activeStartMS, activeEndMS, activeDrainsLeft = nil, nil, nil
         HideAllOverlays()
         return
     end
@@ -222,7 +243,7 @@ local function ApplyOverlay(startMS, endMS)
         return
     end
 
-    activeStartMS, activeEndMS = startMS, endMS
+    activeStartMS, activeEndMS, activeDrainsLeft = startMS, endMS, drainsLeft
 
     local barWidth = castBar:GetWidth()
 
@@ -243,20 +264,23 @@ local function ApplyOverlay(startMS, endMS)
         end
     end
 
-    -- All three share the same right edge, so a wider one drawn on top would
-    -- completely bury a narrower one. Sort widest first and give the narrower
-    -- overlays higher sublevels, so every enabled overlay stays visible and the
-    -- stack reads as bands from the end of the bar inward.
+    -- All three share the same edge, so a wider one drawn on top would completely
+    -- bury a narrower one. Sort widest first and give the narrower overlays
+    -- higher sublevels, so every enabled overlay stays visible and the stack
+    -- reads as bands from the finishing end of the bar inward.
     table.sort(visible, function(a, b)
         if a.pct ~= b.pct then return a.pct > b.pct end
         return a.key < b.key -- total order; equal values must not shuffle per frame
     end)
 
+    local anchorTop = drainsLeft and "TOPLEFT" or "TOPRIGHT"
+    local anchorBottom = drainsLeft and "BOTTOMLEFT" or "BOTTOMRIGHT"
+
     for i, entry in ipairs(visible) do
         local tex, cfg = entry.tex, entry.cfg
         tex:ClearAllPoints()
-        tex:SetPoint("TOPRIGHT", castBar, "TOPRIGHT", 0, 0)
-        tex:SetPoint("BOTTOMRIGHT", castBar, "BOTTOMRIGHT", 0, 0)
+        tex:SetPoint(anchorTop, castBar, anchorTop, 0, 0)
+        tex:SetPoint(anchorBottom, castBar, anchorBottom, 0, 0)
         tex:SetWidth(barWidth * entry.pct)
         tex:SetColorTexture(cfg.r, cfg.g, cfg.b, cfg.a)
         -- Sublevel accepts -8..7; three overlays never exhaust that.
@@ -268,7 +292,7 @@ end
 -- Public: recompute using whatever cast is currently tracked (used after
 -- color changes, CVAR_UPDATE, bar resize, etc).
 function addon.Refresh()
-    ApplyOverlay(activeStartMS, activeEndMS)
+    ApplyOverlay(activeStartMS, activeEndMS, activeDrainsLeft)
 end
 
 -- ---------------------------------------------------------------------
@@ -314,7 +338,7 @@ local function StartResolveRetry()
 end
 
 local function HideOverlay()
-    activeStartMS, activeEndMS = nil, nil
+    activeStartMS, activeEndMS, activeDrainsLeft = nil, nil, nil
     HideAllOverlays()
 end
 
@@ -352,17 +376,25 @@ local f = CreateFrame("Frame")
 
 local function OnCastUpdate(isChannel)
     local name, startMS, endMS
+    local drainsLeft = false
 
     if isChannel then
         local channelName, _, _, s, e, _, _, _, _, numStages = UnitChannelInfo("player")
         name, startMS, endMS = channelName, s, e
+
+        -- A channel drains right to left, so it finishes at the LEFT edge.
+        local isEmpowered = name and numStages and numStages > 0
+        drainsLeft = not isEmpowered
 
         -- An empowered cast (Evoker) reports numEmpowerStages > 0 and keeps
         -- running past endTimeMs while held at max stage. Blizzard's own bar
         -- lengthens itself by exactly that hold window before sizing anything
         -- (CastingBarFrame.lua:429-431), so measuring against the raw endTimeMs
         -- would size the overlay to a shorter bar than the one on screen.
-        if name and numStages and numStages > 0 then
+        --
+        -- Empowers also fill LEFT TO RIGHT despite arriving on the channel
+        -- events, so they keep the right-hand anchor - see ApplyOverlay.
+        if isEmpowered then
             endMS = endMS + GetUnitEmpowerHoldAtMaxTime("player")
         end
     else
@@ -374,7 +406,7 @@ local function OnCastUpdate(isChannel)
         HideOverlay()
         return
     end
-    ApplyOverlay(startMS, endMS)
+    ApplyOverlay(startMS, endMS, drainsLeft)
 end
 
 f:SetScript("OnEvent", function(self, event, unit, ...)
