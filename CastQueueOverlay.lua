@@ -12,6 +12,13 @@ local ADDON_NAME = ...
 -- the bar. They are drawn stacked, so any combination can be on at once.
 local defaults = {
     frameName = nil, -- nil/empty = use the default Blizzard player cast bar
+
+    -- A draining channel starts with the bar full, so the overlay sits UNDER the
+    -- fill exactly when it matters most. This lets every overlay take a different
+    -- opacity for that case only. Off by default, so behaviour is unchanged until
+    -- it is asked for.
+    channelAlpha = { enabled = false, a = 0.70 },
+
     overlays = {
         queue   = { enabled = true,  r = 1.00, g = 1.00, b = 1.00, a = 0.35 },
         latency = { enabled = false, r = 0.35, g = 0.72, b = 1.00, a = 0.35 },
@@ -276,13 +283,19 @@ local function ApplyOverlay(startMS, endMS, drainsLeft)
     local anchorTop = drainsLeft and "TOPLEFT" or "TOPRIGHT"
     local anchorBottom = drainsLeft and "BOTTOMLEFT" or "BOTTOMRIGHT"
 
+    -- Only draining channels get the override. An empowered cast fills left to
+    -- right like a normal cast, so its overlay is never buried under the fill at
+    -- the start and does not need the compensation.
+    local channelAlpha = CastQueueOverlayDB.channelAlpha
+    local useChannelAlpha = drainsLeft and channelAlpha and channelAlpha.enabled
+
     for i, entry in ipairs(visible) do
         local tex, cfg = entry.tex, entry.cfg
         tex:ClearAllPoints()
         tex:SetPoint(anchorTop, castBar, anchorTop, 0, 0)
         tex:SetPoint(anchorBottom, castBar, anchorBottom, 0, 0)
         tex:SetWidth(barWidth * entry.pct)
-        tex:SetColorTexture(cfg.r, cfg.g, cfg.b, cfg.a)
+        tex:SetColorTexture(cfg.r, cfg.g, cfg.b, useChannelAlpha and channelAlpha.a or cfg.a)
         -- Sublevel accepts -8..7; three overlays never exhaust that.
         tex:SetDrawLayer("OVERLAY", i)
         tex:Show()

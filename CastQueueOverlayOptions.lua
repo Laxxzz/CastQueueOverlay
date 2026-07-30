@@ -25,7 +25,7 @@ local S = addon.Style
 -- ---------------------------------------------------------------------
 -- Height leaves room for statusText to wrap to two lines without colliding with
 -- the hint pinned to the bottom edge.
-local WINDOW_W, WINDOW_H = 460, 404
+local WINDOW_W, WINDOW_H = 460, 470
 local PAD = 20
 
 local win = CreateFrame("Frame", "CastQueueOverlayOptionsFrame", UIParent)
@@ -466,8 +466,103 @@ end
 -- ---------------------------------------------------------------------
 -- Cast bar frame
 -- ---------------------------------------------------------------------
+-- ---------------------------------------------------------------------
+-- Channelling opacity
+-- ---------------------------------------------------------------------
+-- A draining channel starts with the bar full, so the overlay begins the channel
+-- underneath the fill - which is precisely when it needs to be readable. This
+-- gives that case its own opacity.
+local channelHeading = S.Heading(win, "CHANNELING OPACITY")
+channelHeading:SetPoint("TOPLEFT", body, "BOTTOMLEFT", 0, -24)
+channelHeading.Rule:SetPoint("RIGHT", win, "RIGHT", -PAD, 0)
+
+local channelCheck = S.Checkbox(win, 18)
+channelCheck:SetPoint("TOPLEFT", channelHeading, "BOTTOMLEFT", 0, -12)
+
+local channelLabel = win:CreateFontString(nil, "OVERLAY")
+channelLabel:SetFontObject(S.fontSmall)
+channelLabel:SetText("Separate opacity while channelling")
+channelLabel:SetPoint("LEFT", channelCheck, "RIGHT", 8, 0)
+
+-- One anchor. TOPRIGHT plus TOP would over-constrain it - each supplies both an
+-- x and a y - and stretch or misplace the button.
+local channelOpacityBtn = S.Button(win, "Opacity", 84, 24)
+channelOpacityBtn:SetPoint("LEFT", channelLabel, "RIGHT", 14, 0)
+
+-- Slider popup, styled like the colour picker and positioned the same way.
+local OPACITY_W, OPACITY_H = 236, 108
+local opacityPopup = CreateFrame("Frame", "CastQueueOverlayChannelOpacityFrame", UIParent)
+opacityPopup:SetSize(OPACITY_W, OPACITY_H)
+opacityPopup:SetFrameStrata("FULLSCREEN_DIALOG")
+opacityPopup:SetToplevel(true)
+opacityPopup:EnableMouse(true)
+opacityPopup:SetMovable(true)
+opacityPopup:SetClampedToScreen(true)
+opacityPopup:RegisterForDrag("LeftButton")
+opacityPopup:SetScript("OnDragStart", opacityPopup.StartMoving)
+opacityPopup:SetScript("OnDragStop", opacityPopup.StopMovingOrSizing)
+opacityPopup:Hide()
+
+S.Fill(opacityPopup, S.color.canvas)
+S.Border(opacityPopup, S.color.border)
+
+local opacityHeading = S.Heading(opacityPopup, "CHANNELING OPACITY")
+opacityHeading:SetPoint("TOPLEFT", 16, -16)
+opacityHeading.Rule:SetPoint("RIGHT", opacityPopup, "RIGHT", -16, 0)
+
+local opacityValue = opacityPopup:CreateFontString(nil, "OVERLAY")
+opacityValue:SetFontObject(S.fontBody)
+opacityValue:SetPoint("TOPLEFT", opacityHeading, "BOTTOMLEFT", 0, -12)
+
+local opacitySlider = S.Slider(opacityPopup, OPACITY_W - 32)
+opacitySlider.Groove:SetPoint("TOPLEFT", opacityValue, "BOTTOMLEFT", 0, -14)
+opacitySlider:SetMinMaxValues(0, 1)
+opacitySlider:SetValueStep(0.01)
+opacitySlider:SetObeyStepOnDrag(true)
+
+local function RefreshChannelControls()
+    local ch = CastQueueOverlayDB.channelAlpha
+    channelCheck:SetChecked(ch.enabled)
+    opacityValue:SetText(("%d%% opacity"):format(math.floor((ch.a or 0) * 100 + 0.5)))
+end
+
+opacitySlider:SetScript("OnValueChanged", function(self, value)
+    local ch = CastQueueOverlayDB.channelAlpha
+    -- Guard the write: OnValueChanged also fires from SetValue when the popup is
+    -- seeded, and without this the seed would round-trip through the saved
+    -- variable on every open.
+    if math.abs((ch.a or 0) - value) > 0.0005 then
+        ch.a = value
+        addon.Refresh()
+    end
+    RefreshChannelControls()
+end)
+
+local opacityDone = S.Button(opacityPopup, "Done", 74, 24, true)
+opacityDone:SetPoint("BOTTOMRIGHT", -16, 14)
+opacityDone:SetScript("OnClick", function() opacityPopup:Hide() end)
+
+channelOpacityBtn:SetScript("OnClick", function()
+    if opacityPopup:IsShown() then
+        opacityPopup:Hide()
+        return
+    end
+    opacitySlider:SetValue(CastQueueOverlayDB.channelAlpha.a or 0.7)
+    RefreshChannelControls()
+    opacityPopup:ClearAllPoints()
+    opacityPopup:SetPoint("TOPLEFT", win, "TOPRIGHT", 12, 0)
+    opacityPopup:Show()
+end)
+
+channelCheck:SetScript("OnClick", function()
+    local ch = CastQueueOverlayDB.channelAlpha
+    ch.enabled = not ch.enabled
+    RefreshChannelControls()
+    addon.Refresh()
+end)
+
 local frameHeading = S.Heading(win, "CAST BAR FRAME")
-frameHeading:SetPoint("TOPLEFT", body, "BOTTOMLEFT", 0, -24)
+frameHeading:SetPoint("TOPLEFT", channelCheck, "BOTTOMLEFT", 0, -24)
 frameHeading.Rule:SetPoint("RIGHT", win, "RIGHT", -PAD, 0)
 
 local editHolder, editBox = S.EditBox(win, 268, 26)
@@ -840,6 +935,7 @@ hint:SetText("Add a colored overlay to the end of your CastBar indicating variou
 -- ---------------------------------------------------------------------
 win:SetScript("OnShow", function()
     SelectTab(activeTab or "queue")
+    RefreshChannelControls()
     editBox:SetText(addon.GetCastBarName())
     statusText:SetText("")
 end)
@@ -856,6 +952,7 @@ win:SetScript("OnHide", function()
     -- picker with no visible owner and a Cancel that writes to a panel you can
     -- no longer see.
     if picker:IsShown() then picker:Hide() end
+    if opacityPopup:IsShown() then opacityPopup:Hide() end
 end)
 
 -- Combat can start while the window is open and the picker is armed. Shut the

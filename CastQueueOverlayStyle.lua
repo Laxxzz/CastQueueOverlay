@@ -248,6 +248,37 @@ function S.Checkbox(parent, size)
     return b
 end
 
+-- Horizontal slider: hairline groove with a coral thumb. Built from our own
+-- textures rather than OptionsSliderTemplate, which brings Blizzard's metal
+-- trough and gold-bordered thumb.
+--
+-- The groove is a separate frame behind the slider rather than a texture on it:
+-- the slider itself has to be tall enough to be comfortable to grab, while the
+-- groove should stay thin.
+function S.Slider(parent, width)
+    local groove = CreateFrame("Frame", nil, parent)
+    groove:SetSize(width, 4)
+    S.Fill(groove, S.color.surface)
+    S.Border(groove, S.color.border)
+
+    local s = CreateFrame("Slider", nil, parent)
+    s:SetOrientation("HORIZONTAL")
+    s:SetSize(width, 18)
+    s:SetPoint("CENTER", groove, "CENTER", 0, 0)
+    s:SetHitRectInsets(0, 0, 0, 0)
+
+    local thumb = s:CreateTexture(nil, "OVERLAY")
+    thumb:SetColorTexture(Unpack(S.color.accent))
+    thumb:SetSize(8, 16)
+    s:SetThumbTexture(thumb)
+
+    s:SetScript("OnEnter", function() thumb:SetColorTexture(Unpack(S.color.text)) end)
+    s:SetScript("OnLeave", function() thumb:SetColorTexture(Unpack(S.color.accent)) end)
+
+    s.Groove = groove
+    return s
+end
+
 -- Section heading: small muted label with a hairline rule running to the right,
 -- which is what gives the window its structure without boxing everything in.
 function S.Heading(parent, text)
