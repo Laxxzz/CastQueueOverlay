@@ -23,3 +23,7 @@ ignore:
   - LICENSE
   - CHANGELOG.md
   - media
+  # Superseded API notes kept for reference only. They are NOT loaded by the
+  # client, and one of them documents ColorPicker's cancelFunc incorrectly, so
+  # shipping them to players is worse than useless.
+  - docs
