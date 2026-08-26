@@ -48,9 +48,9 @@ The window remembers where you put it.
 > previous dark theme. The layout is the same; the colours and chrome are not.
 
 <p align="center">
-  <img width="471" height="526" alt="image" src="https://github.com/user-attachments/assets/da8fb56d-4089-44d2-8484-1653252457fc" />
-  <img width="435" height="515" alt="image" src="https://github.com/user-attachments/assets/8a1c4006-0223-43e0-ad91-a6f73fc321b7" />
-  <img width="427" height="506" alt="image" src="https://github.com/user-attachments/assets/d3d84433-f7e2-49e2-95e7-ce173f2d88d6" />
+  <img width="330" height="368" alt="image" src="https://github.com/user-attachments/assets/da8fb56d-4089-44d2-8484-1653252457fc" />
+  <img width="305" height="361" alt="image" src="https://github.com/user-attachments/assets/8a1c4006-0223-43e0-ad91-a6f73fc321b7" />
+  <img width="299" height="354" alt="image" src="https://github.com/user-attachments/assets/d3d84433-f7e2-49e2-95e7-ce173f2d88d6" />
 </p>
 
 <p align="center">
