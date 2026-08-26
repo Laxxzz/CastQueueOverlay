@@ -48,13 +48,13 @@ The window remembers where you put it.
 > previous dark theme. The layout is the same; the colours and chrome are not.
 
 <p align="center">
-  <img src="media/options-spellqueuewindow.png" width="270" alt="SpellQueueWindow tab">
-  <img src="media/options-latency.png" width="270" alt="Latency tab">
-  <img src="media/options-custom.png" width="270" alt="Custom tab with a millisecond value">
+  <img width="471" height="526" alt="image" src="https://github.com/user-attachments/assets/da8fb56d-4089-44d2-8484-1653252457fc" />
+  <img width="435" height="515" alt="image" src="https://github.com/user-attachments/assets/8a1c4006-0223-43e0-ad91-a6f73fc321b7" />
+  <img width="427" height="506" alt="image" src="https://github.com/user-attachments/assets/d3d84433-f7e2-49e2-95e7-ce173f2d88d6" />
 </p>
 
 <p align="center">
-  <img src="media/options-window.gif" width="420" alt="Switching between the overlay tabs">
+  <img width="525" height="818" alt="image" src="https://github.com/user-attachments/assets/2ec8c65c-1b62-4627-a758-f999ecef1de9" />
 </p>
 
 ## Usage
