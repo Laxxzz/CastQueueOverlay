@@ -27,3 +27,6 @@ ignore:
   # client, and one of them documents ColorPicker's cancelFunc incorrectly, so
   # shipping them to players is worse than useless.
   - docs
+  # The art generator. `art/` itself IS shipped - the client loads it - but the
+  # Python script that produces it is a maintainer tool.
+  - dev

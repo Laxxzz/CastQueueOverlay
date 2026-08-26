@@ -19,6 +19,11 @@ local defaults = {
     -- it is asked for.
     channelAlpha = { enabled = false, a = 0.70 },
 
+    -- Where the user dragged each window to, keyed by the name S.Window was
+    -- given. Stored as point/relativePoint/offsets rather than as a rect, so a
+    -- saved position survives a UI scale change.
+    windows = {},
+
     overlays = {
         queue   = { enabled = true,  r = 1.00, g = 1.00, b = 1.00, a = 0.35 },
         latency = { enabled = false, r = 0.35, g = 0.72, b = 1.00, a = 0.35 },
@@ -422,6 +427,12 @@ local function OnCastUpdate(isChannel)
     ApplyOverlay(startMS, endMS, drainsLeft)
 end
 
+-- Declared ABOVE the event handler on purpose. The slash command sets this
+-- when /cqo is used in combat and PLAYER_REGEN_ENABLED below consumes it; a
+-- `local` further down the file would leave the handler closing over a nil
+-- global instead, and the deferred open would silently never happen.
+local pendingOptions = false
+
 f:SetScript("OnEvent", function(self, event, unit, ...)
     if event == "PLAYER_LOGIN" then
         -- Not just EnsureOverlay(): the configured bar may belong to an addon
@@ -490,7 +501,6 @@ f:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_STOP", "player")
 -- arguments were removed deliberately, everything is configured in the panel.
 -- ---------------------------------------------------------------------
 SLASH_CASTQUEUEOVERLAY1 = "/cqo"
-local pendingOptions = false
 
 SlashCmdList["CASTQUEUEOVERLAY"] = function()
     -- Opens our own frame. It deliberately does NOT go through

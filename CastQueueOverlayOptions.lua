@@ -10,78 +10,48 @@
 -- A frame we create ourselves carries no such restriction, so this opens in
 -- combat. The Settings entry still exists, but only as a button that hands off
 -- to this window.
+--
+-- LAYOUT: this file contains no offset literals. Every row is built through the
+-- cursor in CastQueueOverlayLayout.lua and reports the space it consumed, and
+-- the window's height is taken from the cursor at the end. The previous version
+-- anchored each section to the bottom of the one above it with a hand-picked
+-- offset, and pinned the footer hint to the window's BOTTOM edge with a fixed
+-- window height chosen to leave the status line room to wrap - two things
+-- growing towards each other with a collision waiting for the next setting.
+-- Everything now grows in one direction.
 
 local ADDON_NAME = ...
 
 -- The namespace guard MUST be repeated in every file that touches it. A `local`
 -- captures the value at this instant, so if this file loads first and the table
--- does not exist yet, `addon` would capture nil forever.
+-- does not exist yet, `addon` would capture nil forever. See decision #1.
 CastQueueOverlay = CastQueueOverlay or {}
 local addon = CastQueueOverlay
 local S = addon.Style
+local L = addon.Layout
+local P = addon.Pixel
+local size = S.size
+
+local WINDOW_W = 460
 
 -- ---------------------------------------------------------------------
--- Window
+-- Forward declarations
 -- ---------------------------------------------------------------------
--- Height leaves room for statusText to wrap to two lines without colliding with
--- the hint pinned to the bottom edge.
-local WINDOW_W, WINDOW_H = 460, 470
-local PAD = 20
+--
+-- Everything the frame picker, the combat watcher and the refresh paths touch is
+-- declared HERE, above every closure that reads it.
+--
+-- This is not tidiness. In 2.2.0 and earlier, `local pendingOptions = false` in
+-- the core file sat BELOW the event handler that consumed it, so the handler
+-- closed over the global of that name while the slash command set the local, and
+-- the deferred open never fired. Same family as decision #1: an upvalue must be
+-- declared above every closure that reads it. See decision #15.
+local frame                              -- the options window, built lazily
+local tabs, pages, activeTab
+local frameNameEdit, statusText, pickerText
+local selectButton
+local channelToggleRow, channelSliderRow
 
-local win = CreateFrame("Frame", "CastQueueOverlayOptionsFrame", UIParent)
-win:SetSize(WINDOW_W, WINDOW_H)
-win:SetPoint("CENTER")
-win:SetFrameStrata("DIALOG")
-win:SetToplevel(true)
-win:EnableMouse(true)   -- also stops clicks falling through to the world
-win:SetMovable(true)
-win:SetClampedToScreen(true)
-win:RegisterForDrag("LeftButton")
-win:SetScript("OnDragStart", win.StartMoving)
-win:SetScript("OnDragStop", win.StopMovingOrSizing)
-win:Hide()
-
-S.Fill(win, S.color.canvas)
-S.Border(win, S.color.border)
-
--- Title bar: a coral hairline under the title is the whole accent budget for the
--- window chrome. Anything more and it stops reading as an editor.
-local titleBar = CreateFrame("Frame", nil, win)
-titleBar:SetPoint("TOPLEFT")
-titleBar:SetPoint("TOPRIGHT")
-titleBar:SetHeight(44)
-
-local title = titleBar:CreateFontString(nil, "OVERLAY")
-title:SetFontObject(S.fontTitle)
-title:SetPoint("LEFT", PAD, 0)
-title:SetText("Cast Queue Overlay")
-
-local titleRule = win:CreateTexture(nil, "ARTWORK")
-titleRule:SetColorTexture(S.Unpack(S.color.accent))
-titleRule:SetHeight(1)
-titleRule:SetPoint("TOPLEFT", titleBar, "BOTTOMLEFT", PAD, 0)
-titleRule:SetWidth(28)
-
-local titleRuleRest = win:CreateTexture(nil, "ARTWORK")
-titleRuleRest:SetColorTexture(S.Unpack(S.color.border))
-titleRuleRest:SetHeight(1)
-titleRuleRest:SetPoint("TOPLEFT", titleRule, "TOPRIGHT", 0, 0)
-titleRuleRest:SetPoint("TOPRIGHT", titleBar, "BOTTOMRIGHT", -PAD, 0)
-
-local closeBtn = S.Button(win, "X", 24, 24)
-closeBtn:SetPoint("TOPRIGHT", -PAD + 4, -10)
-closeBtn:SetScript("OnClick", function() win:Hide() end)
-
--- ESC closes the window. While the frame picker is armed our OnKeyDown consumes
--- ESCAPE first, so it cancels picking instead - which is the behaviour you want.
-tinsert(UISpecialFrames, "CastQueueOverlayOptionsFrame")
-
--- ---------------------------------------------------------------------
--- Overlay colour
--- ---------------------------------------------------------------------
--- One tab per overlay, each with its own colour, opacity and on/off. The tabs
--- sit where the OVERLAY COLOUR heading used to, and deliberately carry the
--- heading's font and colour so the row still reads as a section label.
 local TAB_KEYS = { "queue", "latency", "custom" }
 local TAB_TEXT = {
     queue   = "SpellQueueWindow",
@@ -89,22 +59,27 @@ local TAB_TEXT = {
     custom  = "Custom",
 }
 
-local tabs = {}
-local pages = {}
-local activeTab
-
-local body = S.Inset(win)
--- Sized for the tallest page. Only `custom` has a second row, and a body that
--- resized per tab would make the whole window jump as you switch.
-body:SetSize(WINDOW_W - PAD * 2, 82)
+local CHANNEL_TOGGLE_LABEL = "Separate opacity while channelling"
 
 local function CfgFor(key)
     return CastQueueOverlayDB.overlays[key]
 end
 
+local function Percent(a)
+    return ("%d%%"):format(math.floor((a or 0) * 100 + 0.5))
+end
+
+local function HexOf(c)
+    return ("#%02X%02X%02X"):format(
+        math.floor(c.r * 255 + 0.5),
+        math.floor(c.g * 255 + 0.5),
+        math.floor(c.b * 255 + 0.5))
+end
+
 -- ---------------------------------------------------------------------
 -- Colour picker
 -- ---------------------------------------------------------------------
+--
 -- Our own, rather than skinning Blizzard's ColorPickerFrame. That frame is
 -- SHARED: restyling it would silently change the colour picker for every other
 -- addon the player has installed. Acceptable in a personal UI, not in something
@@ -114,151 +89,171 @@ end
 -- gives those textures no `file` attribute (ColorPickerFrame.xml:126-155). We
 -- supply blank textures and the engine fills them, so this is a restyle of the
 -- chrome only and the colour maths stays Blizzard's.
-local PICKER_W, PICKER_H = 268, 268
-local WHEEL = 124
-local BAR_W = 20
+local PICKER_W = 300
+local WHEEL    = 140
+local BAR_W    = 20
 
-local picker = CreateFrame("Frame", "CastQueueOverlayColorPickerFrame", UIParent)
-picker:SetSize(PICKER_W, PICKER_H)
-picker:SetFrameStrata("FULLSCREEN_DIALOG") -- above the options window
-picker:SetToplevel(true)
-picker:EnableMouse(true)
-picker:SetMovable(true)
-picker:SetClampedToScreen(true)
-picker:RegisterForDrag("LeftButton")
-picker:SetScript("OnDragStart", picker.StartMoving)
-picker:SetScript("OnDragStop", picker.StopMovingOrSizing)
-picker:Hide()
-
-S.Fill(picker, S.color.canvas)
-S.Border(picker, S.color.border)
-
-local pickerTitle = S.Heading(picker, "OVERLAY COLOUR")
-pickerTitle:SetPoint("TOPLEFT", 16, -16)
-pickerTitle.Rule:SetPoint("RIGHT", picker, "RIGHT", -16, 0)
-
--- `ColorSelect` is a first-class widget type in Blizzard's UI schema
--- (UI.xsd:966,982), but Blizzard only ever instantiates it from XML - there is
--- not one `CreateFrame("ColorSelect")` in their entire 12.0.7 Lua source. The
--- type ought to be creatable, but "ought to" is not verification, and an error
--- here would abort this whole file at load and take the addon with it. Guarded,
--- with a fall back to Blizzard's own picker further down.
-local ok, sel = pcall(CreateFrame, "ColorSelect", nil, picker)
-if not ok then sel = nil end
-
-if sel then
-sel:SetPoint("TOPLEFT", 16, -40)
-sel:SetSize(WHEEL + 16 + BAR_W + 16 + BAR_W, WHEEL)
-
-local wheelTex = sel:CreateTexture()
-sel:SetColorWheelTexture(wheelTex)
-wheelTex:SetPoint("TOPLEFT")
-wheelTex:SetSize(WHEEL, WHEEL)
-
--- Flat thumbs instead of Interface\Buttons\UI-ColorPicker-Buttons, which carries
--- Blizzard's gold. White reads against every hue on the wheel.
-local wheelThumb = sel:CreateTexture(nil, "OVERLAY")
-sel:SetColorWheelThumbTexture(wheelThumb)
-wheelThumb:SetSize(8, 8)
-wheelThumb:SetColorTexture(1, 1, 1, 1)
-
-local valueTex = sel:CreateTexture()
-sel:SetColorValueTexture(valueTex)
-valueTex:SetPoint("TOPLEFT", wheelTex, "TOPRIGHT", 16, 0)
-valueTex:SetSize(BAR_W, WHEEL)
-
-local valueThumb = sel:CreateTexture(nil, "OVERLAY")
-sel:SetColorValueThumbTexture(valueThumb)
-valueThumb:SetSize(BAR_W + 10, 6)
-valueThumb:SetColorTexture(S.Unpack(S.color.accent))
-
-local alphaTex = sel:CreateTexture()
-sel:SetColorAlphaTexture(alphaTex)
-alphaTex:SetPoint("TOPLEFT", valueTex, "TOPRIGHT", 16, 0)
-alphaTex:SetSize(BAR_W, WHEEL)
-
-local alphaThumb = sel:CreateTexture(nil, "OVERLAY")
-sel:SetColorAlphaThumbTexture(alphaThumb)
-alphaThumb:SetSize(BAR_W + 10, 6)
-alphaThumb:SetColorTexture(S.Unpack(S.color.accent))
-end -- if sel
-
--- Hex field
-local hexHolder, hexEdit = S.EditBox(picker, 84, 24)
-hexHolder:SetPoint("TOPLEFT", sel, "BOTTOMLEFT", 0, -18)
-
-local hexHash = picker:CreateFontString(nil, "OVERLAY")
-hexHash:SetFontObject(S.fontSmall)
-hexHash:SetText("#")
-hexHash:SetPoint("RIGHT", hexHolder, "LEFT", -6, 0)
-
-local opacityText = picker:CreateFontString(nil, "OVERLAY")
-opacityText:SetFontObject(S.fontSmall)
-opacityText:SetPoint("LEFT", hexHolder, "RIGHT", 12, 0)
-
-local okBtn = S.Button(picker, "Done", 74, 24, true)
-okBtn:SetPoint("BOTTOMRIGHT", -16, 16)
-
-local cancelBtn = S.Button(picker, "Cancel", 74, 24)
-cancelBtn:SetPoint("RIGHT", okBtn, "LEFT", -8, 0)
-
--- State for the currently open picker session.
+local picker, pickerSel, pickerHex, pickerOpacityText
 local pickerCfg, pickerOnChange, pickerRestore
 local suppressCallback = false
 
 local function PickerApply()
-    if not pickerCfg then return end
-    local r, g, b = sel:GetColorRGB()
+    if not pickerCfg or not pickerSel then return end
+    local r, g, b = pickerSel:GetColorRGB()
     pickerCfg.r, pickerCfg.g, pickerCfg.b = r, g, b
-    pickerCfg.a = sel:GetColorAlpha()
+    pickerCfg.a = pickerSel:GetColorAlpha()
 
-    if not hexEdit:HasFocus() then
-        hexEdit:SetText(("%02X%02X%02X"):format(
+    if not pickerHex:HasFocus() then
+        pickerHex:SetText(("%02X%02X%02X"):format(
             math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5)))
     end
-    opacityText:SetText(("%d%% opacity"):format(math.floor(pickerCfg.a * 100 + 0.5)))
+    pickerOpacityText:SetText(("%s opacity"):format(Percent(pickerCfg.a)))
 
     if pickerOnChange then pickerOnChange() end
 end
 
--- One handler covers the wheel, the value bar AND the alpha bar. There is no
--- separate alpha event - Blizzard drives both swatchFunc and opacityFunc from
--- this same script (ColorPickerFrame.lua:4-17).
-if sel then
+local function ClosePicker()
+    if picker then picker:Hide() end
+    pickerCfg, pickerOnChange, pickerRestore = nil, nil, nil
+end
+
+-- Can this client create a ColorSelect at all?
+--
+-- `ColorSelect` is a first-class widget type in Blizzard's UI schema
+-- (UI.xsd:966,982), but Blizzard only ever instantiates it from XML - there is
+-- not one `CreateFrame("ColorSelect")` in their entire shipping Lua source. The
+-- type ought to be creatable, but "ought to" is not verification, and an error
+-- here would abort this whole file at load and take the addon with it.
+--
+-- Probed ONCE, on a throwaway parent, exactly like the rounded-corner art in the
+-- style file. Probing inside the picker's own build instead would mean
+-- discovering the failure halfway through a window that is already registered in
+-- UISpecialFrames - a hidden, empty frame that Escape still routes to.
+local colorSelectSupported
+do
+    local scratch = CreateFrame("Frame")
+    local ok, sel = pcall(CreateFrame, "ColorSelect", nil, scratch)
+    colorSelectSupported = (ok and sel) and true or false
+    scratch:Hide()
+end
+
+-- The wheel and its two bars, as a builder: it returns the space it consumed
+-- like everything else, so the picker window's height comes off the same cursor
+-- as its buttons.
+local function BuildColorSelect(parent, x, width, y)
+    local ok, sel = pcall(CreateFrame, "ColorSelect", nil, parent)
+    if not ok or not sel then return nil, 0 end
+
+    P.Point(sel, "TOPLEFT", parent, "TOPLEFT", x, y)
+    P.Size(sel, WHEEL + size.SECTION + BAR_W + size.SECTION + BAR_W, WHEEL)
+
+    local wheelTex = sel:CreateTexture()
+    sel:SetColorWheelTexture(wheelTex)
+    wheelTex:SetPoint("TOPLEFT")
+    P.Size(wheelTex, WHEEL, WHEEL)
+
+    -- Flat thumbs instead of Interface\Buttons\UI-ColorPicker-Buttons, which
+    -- carries Blizzard's gold. White reads against every hue on the wheel.
+    local wheelThumb = sel:CreateTexture(nil, "OVERLAY")
+    sel:SetColorWheelThumbTexture(wheelThumb)
+    P.Size(wheelThumb, 8, 8)
+    wheelThumb:SetColorTexture(1, 1, 1, 1)
+
+    local valueTex = sel:CreateTexture()
+    sel:SetColorValueTexture(valueTex)
+    P.Point(valueTex, "TOPLEFT", wheelTex, "TOPRIGHT", size.SECTION, 0)
+    P.Size(valueTex, BAR_W, WHEEL)
+
+    local valueThumb = sel:CreateTexture(nil, "OVERLAY")
+    sel:SetColorValueThumbTexture(valueThumb)
+    P.Size(valueThumb, BAR_W + 10, 6)
+    valueThumb:SetColorTexture(S.Unpack(S.color.accent))
+
+    local alphaTex = sel:CreateTexture()
+    sel:SetColorAlphaTexture(alphaTex)
+    P.Point(alphaTex, "TOPLEFT", valueTex, "TOPRIGHT", size.SECTION, 0)
+    P.Size(alphaTex, BAR_W, WHEEL)
+
+    local alphaThumb = sel:CreateTexture(nil, "OVERLAY")
+    sel:SetColorAlphaThumbTexture(alphaThumb)
+    P.Size(alphaThumb, BAR_W + 10, 6)
+    alphaThumb:SetColorTexture(S.Unpack(S.color.accent))
+
+    -- One handler covers the wheel, the value bar AND the alpha bar. There is no
+    -- separate alpha event - Blizzard drives both swatchFunc and opacityFunc
+    -- from this same script (ColorPickerFrame.lua:4-17).
     sel:SetScript("OnColorSelect", function()
         if suppressCallback then return end
         PickerApply()
     end)
+
+    return sel, WHEEL
 end
 
-hexEdit:SetScript("OnEnterPressed", function(self)
-    local text = (self:GetText() or ""):gsub("^#", "")
-    local r, g, b = text:match("^(%x%x)(%x%x)(%x%x)$")
-    if r then
-        suppressCallback = true
-        sel:SetColorRGB(tonumber(r, 16) / 255, tonumber(g, 16) / 255, tonumber(b, 16) / 255)
-        suppressCallback = false
-        PickerApply()
-    end
-    self:ClearFocus()
-end)
-hexEdit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+local function BuildPicker()
+    if not colorSelectSupported then return nil end
 
-local function ClosePicker()
-    picker:Hide()
-    pickerCfg, pickerOnChange, pickerRestore = nil, nil, nil
+    local f = S.Window("CastQueueOverlayColorPickerFrame", "colorPicker",
+        PICKER_W, 320, "Overlay colour")
+    -- FULLSCREEN_DIALOG, not merely a higher level: a popup launched from inside
+    -- a window has to escape that window's strata, or it is clipped by it rather
+    -- than drawn over it.
+    f:SetFrameStrata("FULLSCREEN_DIALOG")
+
+    local cursor = L.Cursor(f.Content)
+
+    pickerSel = cursor:Add(BuildColorSelect)
+
+    cursor:Gap(size.SECTION)
+
+    local hexRow = cursor:Add(L.Input, {
+        label = "Hex",
+        width = 84,
+        get = function() return "" end,
+    })
+    pickerHex = hexRow.EditBox
+
+    -- The opacity readout is driven by the alpha bar, so it is reported rather
+    -- than edited.
+    local opacityRow = cursor:Add(L.Readout, { label = "Opacity", value = "" })
+    pickerOpacityText = opacityRow.Value
+
+    cursor:Gap(size.SECTION)
+
+    cursor:Add(L.ButtonRow, {
+        { text = "Done", key = "Done", opts = { primary = true, width = 84 },
+          onClick = ClosePicker },
+        { text = "Cancel", key = "Cancel", opts = { width = 84 },
+          onClick = function()
+              if pickerCfg and pickerRestore then
+                  pickerCfg.r, pickerCfg.g = pickerRestore.r, pickerRestore.g
+                  pickerCfg.b, pickerCfg.a = pickerRestore.b, pickerRestore.a
+                  if pickerOnChange then pickerOnChange() end
+              end
+              ClosePicker()
+          end },
+    })
+
+    -- The height IS the cursor. Header band, the top inset, everything built,
+    -- and a bottom inset matching the top.
+    f:SetHeight(P.Snap(size.HEADER_H + size.PAD + cursor:Consumed() + size.PAD))
+
+    pickerHex:SetScript("OnEnterPressed", function(self)
+        local text = (self:GetText() or ""):gsub("^#", "")
+        local r, g, b = text:match("^(%x%x)(%x%x)(%x%x)$")
+        if r then
+            suppressCallback = true
+            pickerSel:SetColorRGB(tonumber(r, 16) / 255, tonumber(g, 16) / 255,
+                tonumber(b, 16) / 255)
+            suppressCallback = false
+            PickerApply()
+        end
+        self:ClearFocus()
+    end)
+    pickerHex:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+
+    return f
 end
-
-okBtn:SetScript("OnClick", ClosePicker)
-
-cancelBtn:SetScript("OnClick", function()
-    if pickerCfg and pickerRestore then
-        pickerCfg.r, pickerCfg.g = pickerRestore.r, pickerRestore.g
-        pickerCfg.b, pickerCfg.a = pickerRestore.b, pickerRestore.a
-        if pickerOnChange then pickerOnChange() end
-    end
-    ClosePicker()
-end)
 
 -- Fallback for the case where ColorSelect could not be created. Blizzard's own
 -- picker is unstyled but proven - it is what shipped in 2.0.0 - so the feature
@@ -287,8 +282,15 @@ local function ShowBlizzardColorPicker(cfg, onChange)
     })
 end
 
+local pickerUnavailable = false
+
 local function ShowColorPicker(cfg, onChange)
-    if not sel then
+    if not picker and not pickerUnavailable then
+        picker = BuildPicker()
+        pickerUnavailable = (picker == nil)
+    end
+
+    if not picker then
         ShowBlizzardColorPicker(cfg, onChange)
         return
     end
@@ -301,339 +303,168 @@ local function ShowColorPicker(cfg, onChange)
     -- Seed without firing the callback, or the first paint would write the
     -- pre-seed colour straight back over the saved one.
     suppressCallback = true
-    sel:SetColorRGB(cfg.r, cfg.g, cfg.b)
-    sel:SetColorAlpha(cfg.a or 1)
+    pickerSel:SetColorRGB(cfg.r, cfg.g, cfg.b)
+    pickerSel:SetColorAlpha(cfg.a or 1)
     suppressCallback = false
 
     picker:ClearAllPoints()
-    picker:SetPoint("TOPLEFT", win, "TOPRIGHT", 12, 0)
+    picker:SetPoint("TOPLEFT", frame, "TOPRIGHT", size.PAD, 0)
     picker:Show()
     PickerApply()
 end
 
--- Builds the body content for one overlay. Every page is identical except that
--- `custom` gains a value field, since its milliseconds are not read from the game.
-local function BuildPage(key)
+-- ---------------------------------------------------------------------
+-- Overlay pages
+-- ---------------------------------------------------------------------
+
+-- The colour row: label, a hex/opacity readout, and the swatch that opens the
+-- picker. Three regions, each bounded by the next, so none can grow through
+-- another however long the readout gets.
+--
+-- The swatch is SQUARE-cornered with a hairline border, like every other control
+-- - only the window itself rounds. See the note on rounding in the style file.
+local function ColorRow(parent, x, width, y, key, onChanged, stripe)
+    local row = L.Row(parent, x, width, y)
+    row:SetStripe(stripe)
+
+    local swatch = CreateFrame("Button", nil, row)
+    P.Size(swatch, size.SWATCH_W, size.CTRL_H)
+    P.Point(swatch, "RIGHT", row, "RIGHT", -size.ROW_PAD, 0)
+    row:AdoptHover(swatch)
+
+    local fill = swatch:CreateTexture(nil, "ARTWORK")
+    fill:SetAllPoints(swatch)
+    P.Crisp(fill)
+    local swatchBorder = S.Border(swatch, S.color.border, "OVERLAY")
+
+    swatch:SetScript("OnEnter", function(self)
+        swatchBorder:SetColor(S.color.borderBright)
+        if self.cqoHoverIn then self.cqoHoverIn(self) end
+    end)
+    swatch:SetScript("OnLeave", function(self)
+        swatchBorder:SetColor(S.color.border)
+        if self.cqoHoverOut then self.cqoHoverOut(self) end
+    end)
+
+    local readout = S.Label(row, S.fontSmall, "RIGHT")
+    P.Point(readout, "RIGHT", swatch, "LEFT", -size.GAP, 0)
+    P.Size(readout, 120, size.CTRL_H)
+
+    local label = L.BoundedLabel(row, readout, "Colour")
+
+    function row:Refresh()
+        local c = CfgFor(key)
+        fill:SetColorTexture(c.r, c.g, c.b, 1)
+        readout:SetText(("%s   %s"):format(HexOf(c), Percent(c.a)))
+    end
+
+    local function open()
+        ShowColorPicker(CfgFor(key), function()
+            row:Refresh()
+            if onChanged then onChanged() end
+        end)
+    end
+    swatch:SetScript("OnClick", open)
+    row:SetScript("OnMouseUp", open)
+
+    row.Label = label
+    return row, size.ROW_H
+end
+
+-- Builds the body content for one overlay. Every page is the same three rows;
+-- only the last differs, because `custom` is the one overlay whose milliseconds
+-- the player supplies rather than the game.
+local function BuildPage(body, key)
     local page = CreateFrame("Frame", nil, body)
     page:SetAllPoints(body)
+    -- Anchored by two corners, so it has no resolved width in this frame. The
+    -- cursor reads this rather than measuring; see L.WidthOf.
+    page.cqoWidth = body.cqoWidth
     page:Hide()
 
-    local swatchHolder = S.Inset(page)
-    swatchHolder:SetSize(52, 26)
-    swatchHolder:SetPoint("TOPLEFT", 10, -10)
+    -- Inset from the top by the same gap the body reserves at the bottom, so the
+    -- rows sit centred in the recess rather than flush against its top border.
+    local cursor = L.Cursor(page, { top = size.ITEM_GAP })
+    local rows = {}
 
-    local swatchTex = swatchHolder:CreateTexture(nil, "ARTWORK")
-    swatchTex:SetPoint("TOPLEFT", 3, -3)
-    swatchTex:SetPoint("BOTTOMRIGHT", -3, 3)
-    swatchTex:SetColorTexture(1, 1, 1, 1)
+    local function Changed()
+        addon.Refresh()
+    end
 
-    local swatchBtn = CreateFrame("Button", nil, swatchHolder)
-    swatchBtn:SetAllPoints(swatchHolder)
+    rows[#rows + 1] = cursor:Add(L.Toggle, {
+        label = "Enabled",
+        tooltip = "Draw this overlay on the cast bar.",
+        stripe = 1,
+        get = function() return CfgFor(key).enabled end,
+        set = function(v)
+            CfgFor(key).enabled = v
+            page:Refresh()
+            Changed()
+        end,
+    })
 
-    local colorValue = page:CreateFontString(nil, "OVERLAY")
-    colorValue:SetFontObject(S.fontSmall)
-    colorValue:SetPoint("LEFT", swatchHolder, "RIGHT", 12, 0)
+    rows[#rows + 1] = cursor:Add(ColorRow, key, Changed, 2)
 
-    -- One anchor only. RIGHT plus TOP would over-constrain a FontString - each
-    -- supplies both an x and a y - and stretch it. -23 is the vertical centre of
-    -- the swatch row (10 inset + half of 26).
-    local enableLabel = page:CreateFontString(nil, "OVERLAY")
-    enableLabel:SetFontObject(S.fontSmall)
-    enableLabel:SetText("Enabled")
-    enableLabel:SetPoint("RIGHT", page, "TOPRIGHT", -12, -23)
-
-    local check = S.Checkbox(page, 18)
-    check:SetPoint("RIGHT", enableLabel, "LEFT", -8, 0)
-
-    -- Custom is the only overlay whose value the player supplies.
-    local msHolder, msEdit
     if key == "custom" then
-        local msLabel = page:CreateFontString(nil, "OVERLAY")
-        msLabel:SetFontObject(S.fontSmall)
-        msLabel:SetText("Value")
-        msLabel:SetPoint("TOPLEFT", swatchHolder, "BOTTOMLEFT", 0, -12)
-
-        msHolder, msEdit = S.EditBox(page, 80, 24)
-        msHolder:SetPoint("LEFT", msLabel, "RIGHT", 10, 0)
-        msEdit:SetNumeric(true)
-
-        local msUnit = page:CreateFontString(nil, "OVERLAY")
-        msUnit:SetFontObject(S.fontHint)
-        msUnit:SetText("ms")
-        msUnit:SetPoint("LEFT", msHolder, "RIGHT", 8, 0)
+        rows[#rows + 1] = cursor:Add(L.Input, {
+            label = "Value",
+            tooltip = "How far back from the end of the bar this overlay reaches.",
+            suffix = "ms",
+            width = 70,
+            numeric = true,
+            stripe = 3,
+            get = function() return CfgFor(key).valueMS or 0 end,
+            set = function(text)
+                CfgFor(key).valueMS = math.max(0, tonumber(text) or 0)
+                page:Refresh()
+                Changed()
+            end,
+        })
+    else
+        -- Show what this overlay currently resolves to, so "Latency" is not an
+        -- abstraction the player has to take on trust.
+        rows[#rows + 1] = cursor:Add(L.Readout, {
+            label = "Current value",
+            value = "",
+            stripe = 3,
+        })
     end
 
     function page:Refresh()
-        local c = CfgFor(key)
-        swatchTex:SetColorTexture(c.r, c.g, c.b, 1)
+        for _, row in ipairs(rows) do
+            if row.Refresh then row:Refresh() end
+            if row.Box and row.Get then row.Box:SetChecked(row.Get()) end
+        end
 
-        local valueText = ""
-        if key ~= "custom" then
-            -- Show what this overlay currently resolves to, so "Latency" is not
-            -- an abstraction the player has to take on trust.
+        local last = rows[#rows]
+        if key == "custom" then
+            local edit = last.EditBox
+            if edit and not edit:HasFocus() then
+                edit:SetText(tostring(CfgFor(key).valueMS or 0))
+            end
+        elseif last.Value then
             local ms = addon.OverlayValueMS and addon.OverlayValueMS(key) or 0
-            valueText = ("   %dms"):format(math.floor(ms + 0.5))
-        end
-
-        colorValue:SetText(("#%02X%02X%02X   %d%% opacity%s"):format(
-            math.floor(c.r * 255 + 0.5),
-            math.floor(c.g * 255 + 0.5),
-            math.floor(c.b * 255 + 0.5),
-            math.floor((c.a or 0) * 100 + 0.5),
-            valueText))
-
-        check:SetChecked(c.enabled)
-        if msEdit and not msEdit:HasFocus() then
-            msEdit:SetText(tostring(c.valueMS or 0))
+            last.Value:SetText(("%d ms"):format(math.floor(ms + 0.5)))
         end
     end
 
-    check:SetScript("OnClick", function()
-        local c = CfgFor(key)
-        c.enabled = not c.enabled
-        page:Refresh()
-        addon.Refresh()
-    end)
-
-    if msEdit then
-        local function CommitMS(self)
-            local c = CfgFor(key)
-            c.valueMS = math.max(0, tonumber(self:GetText()) or 0)
-            self:ClearFocus()
-            page:Refresh()
-            addon.Refresh()
-        end
-        msEdit:SetScript("OnEnterPressed", CommitMS)
-        msEdit:SetScript("OnEditFocusLost", CommitMS)
-        msEdit:SetScript("OnEscapePressed", function(self)
-            self:ClearFocus()
-            page:Refresh()
-        end)
-    end
-
-    swatchBtn:SetScript("OnClick", function()
-        ShowColorPicker(CfgFor(key), function()
-            page:Refresh()
-            addon.Refresh()
-        end)
-    end)
-
-    return page
-end
-
-local function SelectTab(key)
-    activeTab = key
-    for _, k in ipairs(TAB_KEYS) do
-        tabs[k]:SetActive(k == key)
-        if k == key then
-            pages[k]:Refresh()
-            pages[k]:Show()
-        else
-            pages[k]:Hide()
-        end
-    end
-end
-
-local prevTab
-for _, key in ipairs(TAB_KEYS) do
-    local tab = S.Tab(win, TAB_TEXT[key])
-    if prevTab then
-        tab:SetPoint("LEFT", prevTab, "RIGHT", 6, 0)
-    else
-        tab:SetPoint("TOPLEFT", PAD, -58)
-    end
-    tab:SetScript("OnClick", function() SelectTab(key) end)
-    tabs[key] = tab
-    prevTab = tab
-end
-
-body:SetPoint("TOPLEFT", tabs.queue, "BOTTOMLEFT", 0, -8)
-
-for _, key in ipairs(TAB_KEYS) do
-    pages[key] = BuildPage(key)
-end
-
-local function RefreshAllPages()
-    for _, key in ipairs(TAB_KEYS) do
-        pages[key]:Refresh()
-    end
-end
-
-function addon.OnColorChangedExternally()
-    RefreshAllPages()
+    return page, cursor:Consumed()
 end
 
 -- ---------------------------------------------------------------------
--- Cast bar frame
+-- Frame picker
 -- ---------------------------------------------------------------------
--- ---------------------------------------------------------------------
--- Channelling opacity
--- ---------------------------------------------------------------------
--- A draining channel starts with the bar full, so the overlay begins the channel
--- underneath the fill - which is precisely when it needs to be readable. This
--- gives that case its own opacity.
-local channelHeading = S.Heading(win, "CHANNELING OPACITY")
-channelHeading:SetPoint("TOPLEFT", body, "BOTTOMLEFT", 0, -24)
-channelHeading.Rule:SetPoint("RIGHT", win, "RIGHT", -PAD, 0)
-
-local channelCheck = S.Checkbox(win, 18)
-channelCheck:SetPoint("TOPLEFT", channelHeading, "BOTTOMLEFT", 0, -12)
-
-local channelLabel = win:CreateFontString(nil, "OVERLAY")
-channelLabel:SetFontObject(S.fontSmall)
-channelLabel:SetText("Separate opacity while channelling")
-channelLabel:SetPoint("LEFT", channelCheck, "RIGHT", 8, 0)
-
--- One anchor. TOPRIGHT plus TOP would over-constrain it - each supplies both an
--- x and a y - and stretch or misplace the button.
-local channelOpacityBtn = S.Button(win, "Opacity", 84, 24)
-channelOpacityBtn:SetPoint("LEFT", channelLabel, "RIGHT", 14, 0)
-
--- Slider popup, styled like the colour picker and positioned the same way.
-local OPACITY_W, OPACITY_H = 236, 108
-local opacityPopup = CreateFrame("Frame", "CastQueueOverlayChannelOpacityFrame", UIParent)
-opacityPopup:SetSize(OPACITY_W, OPACITY_H)
-opacityPopup:SetFrameStrata("FULLSCREEN_DIALOG")
-opacityPopup:SetToplevel(true)
-opacityPopup:EnableMouse(true)
-opacityPopup:SetMovable(true)
-opacityPopup:SetClampedToScreen(true)
-opacityPopup:RegisterForDrag("LeftButton")
-opacityPopup:SetScript("OnDragStart", opacityPopup.StartMoving)
-opacityPopup:SetScript("OnDragStop", opacityPopup.StopMovingOrSizing)
-opacityPopup:Hide()
-
-S.Fill(opacityPopup, S.color.canvas)
-S.Border(opacityPopup, S.color.border)
-
-local opacityHeading = S.Heading(opacityPopup, "CHANNELING OPACITY")
-opacityHeading:SetPoint("TOPLEFT", 16, -16)
-opacityHeading.Rule:SetPoint("RIGHT", opacityPopup, "RIGHT", -16, 0)
-
-local opacityValue = opacityPopup:CreateFontString(nil, "OVERLAY")
-opacityValue:SetFontObject(S.fontBody)
-opacityValue:SetPoint("TOPLEFT", opacityHeading, "BOTTOMLEFT", 0, -12)
-
-local opacitySlider = S.Slider(opacityPopup, OPACITY_W - 32)
-opacitySlider.Groove:SetPoint("TOPLEFT", opacityValue, "BOTTOMLEFT", 0, -14)
-opacitySlider:SetMinMaxValues(0, 1)
-opacitySlider:SetValueStep(0.01)
-opacitySlider:SetObeyStepOnDrag(true)
-
-local function RefreshChannelControls()
-    local ch = CastQueueOverlayDB.channelAlpha
-    channelCheck:SetChecked(ch.enabled)
-    opacityValue:SetText(("%d%% opacity"):format(math.floor((ch.a or 0) * 100 + 0.5)))
-end
-
-opacitySlider:SetScript("OnValueChanged", function(self, value)
-    local ch = CastQueueOverlayDB.channelAlpha
-    -- Guard the write: OnValueChanged also fires from SetValue when the popup is
-    -- seeded, and without this the seed would round-trip through the saved
-    -- variable on every open.
-    if math.abs((ch.a or 0) - value) > 0.0005 then
-        ch.a = value
-        addon.Refresh()
-    end
-    RefreshChannelControls()
-end)
-
-local opacityDone = S.Button(opacityPopup, "Done", 74, 24, true)
-opacityDone:SetPoint("BOTTOMRIGHT", -16, 14)
-opacityDone:SetScript("OnClick", function() opacityPopup:Hide() end)
-
-channelOpacityBtn:SetScript("OnClick", function()
-    if opacityPopup:IsShown() then
-        opacityPopup:Hide()
-        return
-    end
-    opacitySlider:SetValue(CastQueueOverlayDB.channelAlpha.a or 0.7)
-    RefreshChannelControls()
-    opacityPopup:ClearAllPoints()
-    opacityPopup:SetPoint("TOPLEFT", win, "TOPRIGHT", 12, 0)
-    opacityPopup:Show()
-end)
-
-channelCheck:SetScript("OnClick", function()
-    local ch = CastQueueOverlayDB.channelAlpha
-    ch.enabled = not ch.enabled
-    RefreshChannelControls()
-    addon.Refresh()
-end)
-
-local frameHeading = S.Heading(win, "CAST BAR FRAME")
-frameHeading:SetPoint("TOPLEFT", channelCheck, "BOTTOMLEFT", 0, -24)
-frameHeading.Rule:SetPoint("RIGHT", win, "RIGHT", -PAD, 0)
-
-local editHolder, editBox = S.EditBox(win, 268, 26)
-editHolder:SetPoint("TOPLEFT", frameHeading, "BOTTOMLEFT", 0, -12)
-
-local applyBtn = S.Button(win, "Apply", 76, 26, true)
-applyBtn:SetPoint("LEFT", editHolder, "RIGHT", 10, 0)
-
-local statusText = win:CreateFontString(nil, "OVERLAY")
-statusText:SetFontObject(S.fontSmall)
-statusText:SetWidth(WINDOW_W - PAD * 2)
-statusText:SetJustifyH("LEFT")
-
-local function TrySetFrameByName(name)
-    name = name and strtrim(name)
-    if not name or name == "" then
-        statusText:SetText(S.Colorize(S.color.bad, "Enter a frame name."))
-        return
-    end
-    if not _G[name] then
-        statusText:SetText(S.Colorize(S.color.bad, "No frame named '" .. name .. "' exists."))
-        return
-    end
-    if addon.SetCastBarByName(name) then
-        statusText:SetText(S.Colorize(S.color.good, "Cast bar set to " .. name .. "."))
-    else
-        statusText:SetText(S.Colorize(S.color.bad, "'" .. name .. "' isn't a usable frame."))
-    end
-end
-
-applyBtn:SetScript("OnClick", function() TrySetFrameByName(editBox:GetText()) end)
-editBox:SetScript("OnEnterPressed", function(self)
-    TrySetFrameByName(self:GetText())
-    self:ClearFocus()
-end)
-editBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-
-function addon.OnCastBarChanged(name)
-    editBox:SetText(name or "")
-end
-
--- ---------------------------------------------------------------------
--- Click-to-select frame picker
--- ---------------------------------------------------------------------
-local selectButton = S.Button(win, "Select Frame", 140, 26)
-selectButton:SetPoint("TOPLEFT", editHolder, "BOTTOMLEFT", 0, -16)
-
-local readoutHolder = S.Inset(win)
-readoutHolder:SetSize(WINDOW_W - PAD * 2, 26)
-readoutHolder:SetPoint("TOPLEFT", selectButton, "BOTTOMLEFT", 0, -12)
-
-local pickerText = readoutHolder:CreateFontString(nil, "OVERLAY")
-pickerText:SetFontObject(S.fontSmall)
-pickerText:SetPoint("LEFT", 8, 0)
-pickerText:SetPoint("RIGHT", -8, 0)
-pickerText:SetJustifyH("LEFT")
-pickerText:SetText("")
-
-statusText:SetPoint("TOPLEFT", readoutHolder, "BOTTOMLEFT", 0, -12)
 
 -- Green outline drawn around whatever frame is currently under the cursor.
 local highlight = CreateFrame("Frame", nil, UIParent)
 highlight:SetFrameStrata("TOOLTIP")
 highlight:EnableMouse(false)
 highlight:Hide()
-local highlightBorder = S.Border(highlight, S.color.accent, "OVERLAY")
-highlightBorder:SetColor(S.color.accent)
+S.Border(highlight, S.color.accent, "OVERLAY")
 
--- We don't use a full-screen catcher frame (it blocks mouse events).
--- Instead we poll C_System.GetFrameStack() on an OnUpdate. For click detection,
--- we temporarily hook WorldFrame's OnMouseDown.
+-- We don't use a full-screen catcher frame (it blocks mouse events). Instead we
+-- poll C_System.GetFrameStack() on an OnUpdate. For click detection, we
+-- temporarily hook WorldFrame's OnMouseDown.
 local currentTarget
 local currentTargetName
 local isSelecting = false
@@ -645,7 +476,7 @@ local function IsUselessPick(region)
         or region == highlight
         or region == UIParent
         or region == WorldFrame
-        or region == win
+        or region == frame
 end
 
 local function RegionName(region)
@@ -680,9 +511,9 @@ local function NormalisedSize(region)
 
     local scale = 1
     if region.GetEffectiveScale then
-        local ok2, s = pcall(region.GetEffectiveScale, region)
-        local parentScale = UIParent:GetEffectiveScale()
-        if ok2 and s and not IsSecret(s) and parentScale and parentScale > 0 then
+        local s = P.EffectiveScale(region)
+        local parentScale = P.EffectiveScale(UIParent)
+        if s and parentScale and parentScale > 0 then
             scale = s / parentScale
         end
     end
@@ -714,8 +545,8 @@ local candidateIndex = 1
 
 local function CollectCandidates()
     -- GetMouseFoci() only reports regions with mouse input ENABLED; cast bars
-    -- call EnableMouse(false), so they never appear in it.
-    -- C_System.GetFrameStack() returns every region under the cursor regardless
+    -- call EnableMouse(false), so they never appear in it. C_System
+    -- .GetFrameStack() returns every region under the cursor regardless
     -- (SlashCommands.lua:1350).
     local stack = C_System and C_System.GetFrameStack and C_System.GetFrameStack() or {}
 
@@ -792,14 +623,15 @@ end
 local deferredKeyboardRelease = false
 
 local function ReleaseKeyboard()
-    win:SetScript("OnKeyDown", nil)
+    if not frame then return end
+    frame:SetScript("OnKeyDown", nil)
     if InCombatLockdown() then
         deferredKeyboardRelease = true
         return
     end
     deferredKeyboardRelease = false
-    win:EnableKeyboard(false)
-    win:SetPropagateKeyboardInput(true)
+    frame:EnableKeyboard(false)
+    frame:SetPropagateKeyboardInput(true)
 end
 
 -- Every exit path must go through here. Selecting installs a WorldFrame script,
@@ -809,10 +641,10 @@ local function StopSelecting()
     highlight:Hide()
     currentTarget = nil
     currentTargetName = nil
-    selectButton:SetLabel("Select Frame")
+    if selectButton then selectButton:SetLabel("Select frame") end
 
     if poller then poller:Hide() end
-    pickerText:SetText("")
+    if pickerText then pickerText:SetText("") end
     candidates = {}
     candidateIndex = 1
 
@@ -842,7 +674,8 @@ local function RefreshPicker()
 
     local suffix = ""
     if #candidates > 1 then
-        suffix = S.Colorize(S.color.textFaint, ("   %d/%d  TAB to cycle"):format(candidateIndex, #candidates))
+        suffix = S.Colorize(S.color.textFaint,
+            ("   %d/%d  TAB to cycle"):format(candidateIndex, #candidates))
     end
     pickerText:SetText(S.Colorize(S.color.accent, name) .. suffix)
 end
@@ -857,24 +690,29 @@ poller:SetScript("OnUpdate", function(self, elapsed)
     RefreshPicker()
 end)
 
-selectButton:SetScript("OnClick", function()
-    if isSelecting then
-        StopSelecting()
+local function TrySetFrameByName(name)
+    name = name and strtrim(name)
+    if not name or name == "" then
+        statusText:SetText(S.Colorize(S.color.bad, "Enter a frame name."))
         return
     end
-
-    -- The picker needs the keyboard for TAB and Escape, and both calls that grab
-    -- it are blocked in combat. Refuse up front rather than starting a picker
-    -- whose cycling and cancel keys would silently not work.
-    if InCombatLockdown() then
-        statusText:SetText(S.Colorize(S.color.bad, "The frame picker needs the keyboard and is unavailable in combat."))
+    if not _G[name] then
+        statusText:SetText(S.Colorize(S.color.bad, "No frame named '" .. name .. "' exists."))
         return
     end
+    if addon.SetCastBarByName(name) then
+        statusText:SetText(S.Colorize(S.color.good, "Cast bar set to " .. name .. "."))
+    else
+        statusText:SetText(S.Colorize(S.color.bad, "'" .. name .. "' isn't a usable frame."))
+    end
+end
 
+local function StartSelecting()
     isSelecting = true
     currentTarget = nil
     candidateIndex = 1
-    statusText:SetText(S.Colorize(S.color.textMuted, "Click a frame to select it. TAB cycles, Esc cancels."))
+    statusText:SetText(S.Colorize(S.color.textMuted,
+        "Click a frame to select it. TAB cycles, Esc cancels."))
     selectButton:SetLabel("Selecting...")
     poller:Show()
 
@@ -895,13 +733,13 @@ selectButton:SetScript("OnClick", function()
         TrySetFrameByName(name)
     end)
 
-    -- TAB rather than the mouse wheel: while picking the cursor is over
+    -- TAB rather than the mouse wheel: while picking, the cursor is over
     -- arbitrary frames, and catching the wheel globally would need the very
     -- full-screen mouse-enabled catcher this design avoids. Propagation is
     -- suppressed for exactly the two keys we consume.
-    win:EnableKeyboard(true)
-    win:SetPropagateKeyboardInput(true)
-    win:SetScript("OnKeyDown", function(self, key)
+    frame:EnableKeyboard(true)
+    frame:SetPropagateKeyboardInput(true)
+    frame:SetScript("OnKeyDown", function(self, key)
         if not isSelecting then
             self:SetPropagateKeyboardInput(true)
             return
@@ -921,39 +759,268 @@ selectButton:SetScript("OnClick", function()
             self:SetPropagateKeyboardInput(true)
         end
     end)
-end)
-
-local hint = win:CreateFontString(nil, "OVERLAY")
-hint:SetFontObject(S.fontHint)
-hint:SetPoint("BOTTOMLEFT", PAD, PAD - 6)
-hint:SetPoint("BOTTOMRIGHT", -PAD, PAD - 6)
-hint:SetJustifyH("LEFT")
-hint:SetText("Add a colored overlay to the end of your CastBar indicating various time values")
+end
 
 -- ---------------------------------------------------------------------
--- Show / hide
+-- Refresh
 -- ---------------------------------------------------------------------
-win:SetScript("OnShow", function()
-    SelectTab(activeTab or "queue")
+
+local function SelectTab(key)
+    activeTab = key
+    for _, k in ipairs(TAB_KEYS) do
+        tabs[k]:SetActive(k == key)
+        if k == key then
+            pages[k]:Refresh()
+            pages[k]:Show()
+        else
+            pages[k]:Hide()
+        end
+    end
+end
+
+-- The channelling slider is meaningless while the toggle above it is off, so it
+-- is DISABLED rather than merely ignored - and it names the setting that is
+-- holding it down. A control that looks live and does nothing is the complaint
+-- S.Requires exists to answer.
+local function RefreshChannelControls()
+    if not channelToggleRow then return end
+    local ch = CastQueueOverlayDB.channelAlpha
+    channelToggleRow.Box:SetChecked(ch.enabled)
+    channelSliderRow:SetValue(ch.a or 0.7)
+    channelSliderRow:SetEnabled(ch.enabled,
+        S.Requires(CHANNEL_TOGGLE_LABEL, "enabled"))
+end
+
+-- The frame picker needs the keyboard for TAB and Escape, and both calls that
+-- grab it are blocked in combat. The button says so rather than failing when
+-- pressed.
+local function RefreshPickerAvailability()
+    if not selectButton then return end
+    local combat = InCombatLockdown()
+    selectButton:SetDisabledReason(combat and S.Requires("you to be out of combat") or nil)
+    selectButton:SetEnabled(not combat)
+end
+
+local function RefreshAll()
+    if not frame then return end
+    for _, key in ipairs(TAB_KEYS) do
+        pages[key]:Refresh()
+    end
     RefreshChannelControls()
-    editBox:SetText(addon.GetCastBarName())
-    statusText:SetText("")
-end)
+    RefreshPickerAvailability()
+end
 
--- Closing the window by any route must tear the picker down. Previously only
--- Escape did: closing via the button left isSelecting true, so the outline kept
--- tracking the cursor over a closed window, Escape did nothing because the
--- keyboard grab had gone with the frame, and clicks did nothing because the
--- WorldFrame hook was still installed but the panel could not respond.
-win:SetScript("OnHide", function()
-    if isSelecting then StopSelecting() end
-    -- The picker is parented to UIParent so it can float outside this window, so
-    -- it does not inherit the hide. Leaving it behind would strand a colour
-    -- picker with no visible owner and a Cancel that writes to a panel you can
-    -- no longer see.
-    if picker:IsShown() then picker:Hide() end
-    if opacityPopup:IsShown() then opacityPopup:Hide() end
-end)
+-- ---------------------------------------------------------------------
+-- Build
+-- ---------------------------------------------------------------------
+
+local function Build()
+    -- The height is a starting value only; it is replaced from the cursor at the
+    -- end of this function. It matters solely because the Content frame needs a
+    -- width before the first builder can measure against it.
+    frame = S.Window("CastQueueOverlayOptionsFrame", "options", WINDOW_W, 600,
+        "Cast Queue Overlay")
+
+    local content = frame.Content
+    local cursor = L.Cursor(content)
+
+    cursor:Add(L.Section, "Overlays")
+    cursor:Gap(size.ITEM_GAP)
+
+    -- `.Tabs` off the strip, not a third return value: Cursor:Add forwards only
+    -- frame and height, so reading a third here would silently be nil and the
+    -- first SelectTab would error on indexing it.
+    local strip = cursor:Add(L.TabStrip, TAB_KEYS, TAB_TEXT,
+        function(key) SelectTab(key) end)
+    tabs = strip.Tabs
+
+    cursor:Gap(size.ITEM_GAP)
+
+    -- The body is a recessed panel holding one page per tab, all the same size.
+    -- A body that resized per tab would make the whole window jump as you switch
+    -- - so every page is built, the tallest wins, and the body is sized to it.
+    pages = {}
+    cursor:Add(function(parent, x, width, y)
+        local body = S.Inset(parent)
+        P.Point(body, "TOPLEFT", parent, "TOPLEFT", x, y)
+        P.Size(body, width, size.ROW_H) -- replaced below, once the pages exist
+        body.cqoWidth = width
+
+        local tallest = 0
+        for _, key in ipairs(TAB_KEYS) do
+            local page, consumed = BuildPage(body, key)
+            pages[key] = page
+            if consumed > tallest then tallest = consumed end
+        end
+
+        -- Height IS the content. The page cursor already started one gap down,
+        -- so this adds only the matching gap at the bottom.
+        local h = tallest + size.ITEM_GAP
+        P.Size(body, width, h)
+        return body, h
+    end)
+
+    cursor:Gap(size.SECTION)
+
+    cursor:Add(L.Section, "Channelling")
+    cursor:Gap(size.ITEM_GAP)
+
+    channelToggleRow = cursor:Add(L.Toggle, {
+        label = CHANNEL_TOGGLE_LABEL,
+        tooltip = "A channel starts with the bar full, so the overlay begins "
+            .. "underneath the fill - which is exactly when it needs to be "
+            .. "readable. This gives that case its own opacity.",
+        stripe = 1,
+        get = function() return CastQueueOverlayDB.channelAlpha.enabled end,
+        set = function(v)
+            CastQueueOverlayDB.channelAlpha.enabled = v
+            RefreshChannelControls()
+            addon.Refresh()
+        end,
+    })
+
+    channelSliderRow = cursor:Add(L.SliderRow, {
+        label = "Opacity while channelling",
+        stripe = 2,
+        min = 0, max = 1, step = 0.01,
+        format = function(v) return Percent(v) end,
+        get = function() return CastQueueOverlayDB.channelAlpha.a or 0.7 end,
+        set = function(v)
+            CastQueueOverlayDB.channelAlpha.a = v
+            addon.Refresh()
+        end,
+    })
+
+    cursor:Gap(size.SECTION)
+
+    cursor:Add(L.Section, "Cast bar")
+    cursor:Gap(size.ITEM_GAP)
+
+    local frameRow = cursor:Add(L.Input, {
+        label = "Frame name",
+        tooltip = "The global name of the frame to draw on. Leave empty for "
+            .. "Blizzard's own cast bar.",
+        width = 220,
+        stripe = 1,
+        get = function() return addon.GetCastBarName() end,
+        set = function(text) TrySetFrameByName(text) end,
+    })
+    frameNameEdit = frameRow.EditBox
+
+    cursor:Gap(size.ITEM_GAP)
+
+    local buttons = cursor:Add(L.ButtonRow, {
+        { text = "Apply", key = "Apply", opts = { primary = true, width = 96 },
+          onClick = function() TrySetFrameByName(frameNameEdit:GetText()) end },
+        { text = "Select frame", key = "Select", opts = { width = 130 },
+          onClick = function()
+              if isSelecting then
+                  StopSelecting()
+                  return
+              end
+              -- Refuse up front rather than starting a picker whose cycling and
+              -- cancel keys would silently not work.
+              if InCombatLockdown() then
+                  RefreshPickerAvailability()
+                  return
+              end
+              StartSelecting()
+          end },
+    })
+    selectButton = buttons.Select
+
+    cursor:Gap(size.ITEM_GAP)
+
+    -- The live readout for the picker: a recessed strip, because it reports
+    -- rather than accepts.
+    cursor:Add(function(parent, x, width, y)
+        local holder = S.Inset(parent)
+        P.Point(holder, "TOPLEFT", parent, "TOPLEFT", x, y)
+        P.Size(holder, width, size.ROW_H_SM)
+
+        pickerText = S.Label(holder, S.fontSmall, "LEFT")
+        P.Point(pickerText, "LEFT", holder, "LEFT", size.ITEM_GAP, 0)
+        P.Point(pickerText, "RIGHT", holder, "RIGHT", -size.ITEM_GAP, 0)
+        pickerText:SetText("")
+
+        return holder, size.ROW_H_SM
+    end)
+
+    cursor:Gap(size.ITEM_GAP)
+
+    -- Two reserved lines. The status message changes long after the layout is
+    -- fixed, so measuring whichever string happened to be set at build time
+    -- would size the window to it and force a resize on every message.
+    statusText = cursor:Add(L.MessageLine, 2)
+
+    cursor:Gap(size.SECTION)
+
+    cursor:Add(L.Paragraph,
+        "Shades the trailing end of your cast bar to show the time values you "
+        .. "would otherwise have to guess at.", S.fontHint)
+
+    -- The height IS the cursor. Header band, the top inset, everything built,
+    -- and a bottom inset matching the top.
+    frame:SetHeight(P.Snap(size.HEADER_H + size.PAD + cursor:Consumed() + size.PAD))
+
+    frame.Badge:SetText(S.Colorize(S.color.textMuted,
+        "v" .. (C_AddOns.GetAddOnMetadata(ADDON_NAME, "Version") or "")))
+
+    frame:SetScript("OnShow", function()
+        SelectTab(activeTab or "queue")
+        RefreshAll()
+        frameNameEdit:SetText(addon.GetCastBarName())
+        statusText:SetText("")
+    end)
+
+    -- Closing the window by any route must tear the picker down. Previously only
+    -- Escape did: closing via the button left isSelecting true, so the outline
+    -- kept tracking the cursor over a closed window, Escape did nothing because
+    -- the keyboard grab had gone with the frame, and clicks did nothing because
+    -- the WorldFrame hook was still installed but the panel could not respond.
+    frame:SetScript("OnHide", function()
+        if isSelecting then StopSelecting() end
+        -- The colour picker is parented to UIParent so it can float outside this
+        -- window, so it does not inherit the hide. Leaving it behind would strand
+        -- a picker with no visible owner and a Cancel that writes to a panel you
+        -- can no longer see.
+        if picker and picker:IsShown() then picker:Hide() end
+    end)
+
+    frame:RestorePosition()
+end
+
+-- ---------------------------------------------------------------------
+-- Public entry points
+-- ---------------------------------------------------------------------
+--
+-- These are called from the core file, which loads LAST, so they must exist at
+-- this file's scope even though the window itself is built lazily.
+
+function addon.ShowOptions()
+    if not frame then Build() end
+    frame:Show()
+end
+
+function addon.ToggleOptions()
+    if not frame then Build() end
+    if frame:IsShown() then
+        frame:Hide()
+    else
+        frame:Show()
+    end
+end
+
+-- Kept as a documented extension point rather than pruned as dead code: nothing
+-- currently changes an overlay colour from outside this window, because `/cqo`
+-- takes no arguments. See decision #4.
+function addon.OnColorChangedExternally()
+    RefreshAll()
+end
+
+function addon.OnCastBarChanged(name)
+    if frameNameEdit then frameNameEdit:SetText(name or "") end
+end
 
 -- Combat can start while the window is open and the picker is armed. Shut the
 -- picker down rather than let it run with keys it can no longer grab or release,
@@ -965,28 +1032,23 @@ combatWatcher:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_REGEN_DISABLED" then
         if isSelecting then
             StopSelecting()
-            statusText:SetText(S.Colorize(S.color.textMuted, "Frame picker stopped - combat started."))
+            statusText:SetText(S.Colorize(S.color.textMuted,
+                "Frame picker stopped - combat started."))
         end
     elseif deferredKeyboardRelease then
         ReleaseKeyboard()
     end
+    RefreshPickerAvailability()
 end)
-
-function addon.ToggleOptions()
-    if win:IsShown() then
-        win:Hide()
-    else
-        win:Show()
-    end
-end
-
-function addon.ShowOptions()
-    win:Show()
-end
 
 -- ---------------------------------------------------------------------
 -- Settings entry: a handoff button, nothing more
 -- ---------------------------------------------------------------------
+--
+-- Left in Blizzard's chrome deliberately. This is one paragraph and one button
+-- inside a panel we do not own and cannot style; dressing it in the addon's
+-- palette would make a Blizzard-framed page look half-reskinned, which reads
+-- worse than a plain one.
 local stub = CreateFrame("Frame")
 stub.name = "Cast Queue Overlay"
 

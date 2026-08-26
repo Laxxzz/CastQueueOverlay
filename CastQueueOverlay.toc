@@ -1,11 +1,13 @@
-## Interface: 120007
+## Interface: 120100
 ## Title: Cast Queue Overlay
 ## Notes: Adds coloured overlays to the end of your cast bar for spell queue window, latency and a custom value.
 ## Author: Laxx
-## Version: 2.2.0
+## Version: 2.3.0
 ## SavedVariables: CastQueueOverlayDB
 ## X-Curse-Project-ID: 1628899
 
+CastQueueOverlayPixel.lua
 CastQueueOverlayStyle.lua
+CastQueueOverlayLayout.lua
 CastQueueOverlayOptions.lua
 CastQueueOverlay.lua

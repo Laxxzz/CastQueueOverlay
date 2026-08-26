@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.3.0
+
+- The options window has been redesigned, and now matches Simple Loot Council: a
+  blue gradient panel with rounded corners, flat controls and hairline borders.
+- The window remembers where you drag it, and so does the colour picker.
+- Each overlay tab now shows its enable toggle, colour and current value as
+  separate rows, with the whole row clickable rather than just the checkbox.
+- Channelling opacity has moved out of its own popup and into a slider on the
+  main window. While "Separate opacity while channelling" is off, the slider is
+  greyed out and says which setting turns it on.
+- The frame picker button is greyed out during combat, where it cannot work,
+  instead of failing when pressed.
+- Borders and edges are now aligned to real pixels, so they stay a consistent
+  hairline at any UI scale and re-align if you change that scale.
+- Long text in the window is truncated with a tooltip showing the full text,
+  rather than overlapping whatever is next to it.
+
+## 2.2.1
+
+- Updated for patch 12.1.0. The addon no longer shows as out of date.
+- Fixed `/cqo` used during combat never opening the options window once combat
+  ended.
+
 ## 2.2.0
 
 - Channelled casts now draw the overlays at the **left** end of the bar, which is

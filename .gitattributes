@@ -18,3 +18,8 @@
 *.jpg binary
 *.jpeg binary
 *.gif binary
+
+# The rounded-corner art. A line-ending filter applied to a .tga corrupts it,
+# and the failure is quiet: SetTexture returns false, the style file falls back
+# to square corners, and nothing errors.
+*.tga binary

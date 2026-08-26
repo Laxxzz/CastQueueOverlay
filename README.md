@@ -4,9 +4,9 @@ A World of Warcraft addon that shades the trailing end of your cast bar to show
 time values you normally have to guess at — chiefly your **spell queue window**,
 the slice at the end of a cast during which your next spell is already accepted.
 
-Retail only. Built and tested against **12.0.7 (Midnight)**, `## Interface: 120007`.
+Retail only. Built and tested against **12.1.0 (Midnight)**, `## Interface: 120100`.
 
-![Interface 120007](https://img.shields.io/badge/Interface-120007-D97757)
+![Interface 120100](https://img.shields.io/badge/Interface-120100-D97757)
 
 ## What it draws
 
@@ -34,9 +34,18 @@ band never hides a narrower one.
 
 ### Options
 
-A tab per overlay, each with its own colour, opacity and enable toggle. The
+A tab per overlay, each with its own enable toggle, colour and opacity. The
 SpellQueueWindow and Latency tabs show the value they currently resolve to, so
-you can see what is actually being drawn.
+you can see what is actually being drawn; the Custom tab lets you type one.
+
+Below that, a separate opacity for channelled casts — a channel starts with the
+bar full, so the overlay begins underneath the fill, which is exactly when it
+needs to be readable.
+
+The window remembers where you put it.
+
+> **Note:** the screenshots below predate the 2.3.0 redesign and still show the
+> previous dark theme. The layout is the same; the colours and chrome are not.
 
 <p align="center">
   <img src="media/options-spellqueuewindow.png" width="270" alt="SpellQueueWindow tab">
