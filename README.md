@@ -54,7 +54,7 @@ The window remembers where you put it.
 </p>
 
 <p align="center">
-  <img width="525" height="818" alt="image" src="https://github.com/user-attachments/assets/2ec8c65c-1b62-4627-a758-f999ecef1de9" />
+  <img width="525" height="818" alt="image" src="Discord_4wf3pMLNMI.gif" />
 </p>
 
 ## Usage
