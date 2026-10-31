@@ -2,7 +2,7 @@
 --
 -- Loads FIRST - before the style file - because every border, size and offset in
 -- the options window is routed through Snap(). See reference/ui-design.md §8 in
--- the WoW-Addon-API-Ref repo, and decision #18 in CLAUDE.md.
+-- the WoW-Addon-API-Ref repo, and decision #18 in docs/design-decisions.md.
 --
 -- The failure this exists to prevent: a 1px border is 1px only when one UI unit
 -- maps to one physical pixel. At any other effective scale it lands between
