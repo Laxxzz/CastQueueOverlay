@@ -1,7 +1,8 @@
 # Claude Code config — machine-specific and not useful to anyone cloning this.
 # It carries absolute paths (and therefore a username) and local tool
 # permissions, so it stays out of a public repo entirely.
-.claude/
+.claude/*
+!.claude/settings.json
 
 # WoW writes saved variables to WTF\, never into the addon folder, so there is
 # nothing of the player's to exclude here. Listed only so the next person does
