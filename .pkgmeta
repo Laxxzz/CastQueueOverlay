@@ -19,6 +19,7 @@ ignore:
   - .gitattributes
   - .gitignore
   - .pkgmeta
+  - .claude
   - README.md
   - LICENSE
   - CHANGELOG.md
