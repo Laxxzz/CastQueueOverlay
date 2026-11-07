@@ -1,14 +1,13 @@
 -- CastQueueOverlay: shared visual language for the standalone options window.
 --
--- A dark-blue-to-light-blue gradient canvas, raised light-blue controls sitting
--- on top of it, recessed black insets for anything typeable, hairline borders
--- rather than bevels, and one warm accent used only for state.
+-- A flat, near-black canvas with a slight orange hue cast, lifted controls on
+-- top of it, recessed black insets for anything typeable, hairline borders
+-- rather than bevels, and ONE accent (#E0873A orange) used for state.
 --
--- This palette and these widget contracts are SimpleLootCouncil's, adopted
--- deliberately so the two addons read as one suite. The previous look here was a
--- warm near-black "editor" palette that shared only the coral accent; two
--- addons by the same author that agree on the accent and nothing else look like
--- a coincidence rather than a family.
+-- This palette and these widget contracts are SimpleLootCouncil's current
+-- design language, hue-rotated from its blue to this addon's orange so the two
+-- read as one suite. The neutrals carry 0.75x SLC's saturation; the accent ramp
+-- (accent / accentDim / accentPale / knob) keeps SLC's relationships.
 --
 -- Everything is drawn with flat SetColorTexture rectangles instead of Blizzard's
 -- BackdropTemplate. Backdrops bring gold beveled edges and tiled parchment that
@@ -22,9 +21,8 @@
 --   * A widget owns its own geometry. Callers pass CONTENT and BEHAVIOUR, and an
 --     override only where the size genuinely varies. The test for whether a
 --     widget is finished is whether a call site can render it wrong by omission.
---   * Everything that is not the canvas or a control surface is white or black
---     at an alpha, never a colour. That is what lets the canvas gradient be
---     retinted without re-picking forty hex values.
+--   * Everything that is not the canvas, a control surface or the accent is
+--     white or black at an alpha, never a colour.
 
 -- The namespace guard MUST be repeated in every file that touches it. See
 -- decision #1 - this addon has been broken by its absence, in both directions.
@@ -46,94 +44,104 @@ local Snap = P.Snap
 --
 -- Note how few of these are actually a colour. Borders, text, row stripes and
 -- overlays are all { 1, 1, 1 } or { 0, 0, 0 } at a chosen alpha, which is why
--- they stay correctly contrasted at every point along the canvas gradient - a
--- hardcoded border hex is correct against exactly one background, and this
--- window does not have one background.
+-- they stay correctly contrasted across the whole ground - a hardcoded border
+-- hex is correct against exactly one background.
 S.color = {
-    -- The canvas gradient. Light at the top, dark at the bottom, because that is
-    -- where ambient light comes from and because it puts the lightest band
-    -- behind the title where the header sits.
-    canvasTop    = { 0.141, 0.251, 0.369 }, -- #24405E  light blue
-    canvasBottom = { 0.047, 0.086, 0.145 }, -- #0C1625  dark blue
+    -- The panel. Near-black with a faint warm cast; the window's ground below
+    -- falls from canvasTop to canvasBottom, so this is the midpoint stand-in
+    -- for the few places that need one colour (small solid chips).
+    canvas       = { 0.085, 0.070, 0.056 }, -- #16120E  panel
 
-    -- A single flat stand-in for the gradient, for the few places that need one
-    -- colour rather than two: primary button label text, small solid chips.
-    canvas       = { 0.075, 0.145, 0.231 }, -- #13253B  the gradient's midpoint
+    -- Controls are RAISED, with hover and pressed steps either side.
+    control      = { 0.111, 0.089, 0.070 }, -- #1C1712  button rest
+    controlHover = { 0.174, 0.139, 0.109 }, -- #2C231C  button hover
+    controlDown  = { 0.066, 0.052, 0.040 }, -- #110D0A  button pressed
 
-    -- Controls are RAISED, so they are a blue of their own rather than the
-    -- canvas. This is the one place a hue is spent on something that is not
-    -- state: a button that is white-at-alpha over this gradient reads grey, and
-    -- a panel of grey buttons on a blue window looks like two addons stapled
-    -- together.
-    --
-    -- They sit DARKER than the canvas gradient's upper half, and the separation
-    -- is carried by the white border below rather than by the fill. A fill light
-    -- enough to read as raised against the top of the gradient washes out
-    -- against the bottom of it - the hazard of putting a flat colour on a
-    -- background that is not one colour.
-    control      = { 0.145, 0.243, 0.349 }, -- #253E59  button rest
-    controlHover = { 0.208, 0.333, 0.463 }, -- #355576  button hover
-    controlDown  = { 0.106, 0.176, 0.255 }, -- #1B2D41  button pressed
+    -- White, a step above the panel hairline.
+    controlBorder      = { 1, 1, 1, 0.22 },
+    controlBorderHover = { 1, 1, 1, 0.55 },
 
-    -- A button's border is WHITE, not the panel hairline. It is what actually
-    -- separates a control from the canvas now that the fill is dark, so it is a
-    -- deliberate step brighter than every other edge in the addon - and it is
-    -- still one physical pixel.
-    controlBorder      = { 1, 1, 1, 0.65 },
-    controlBorderHover = { 1, 1, 1, 1.00 },
+    -- Inputs are RECESSED: black at an alpha.
+    inset        = { 0, 0, 0, 0.25 },
+    insetDeep    = { 0, 0, 0, 0.35 },
 
-    -- Inputs are RECESSED, so they are darker than whatever is behind them.
-    -- Black at an alpha rather than a hex, so an edit box reads as a hole in the
-    -- panel at any point on the gradient.
-    inset        = { 0, 0, 0, 0.34 },
-    insetDeep    = { 0, 0, 0, 0.46 },
-
-    border       = { 1, 1, 1, 0.11 },       -- hairline
-    borderBright = { 1, 1, 1, 0.26 },       -- focused / hovered edge
+    border       = { 1, 1, 1, 0.05 },       -- hairline
+    borderBright = { 1, 1, 1, 0.20 },       -- focused / hovered edge
 
     text         = { 1, 1, 1, 1.00 },       -- primary
-    textMuted    = { 1, 1, 1, 0.62 },       -- secondary
-    textFaint    = { 1, 1, 1, 0.40 },       -- hints, disabled
+    textMuted    = { 0.845, 0.786, 0.736 }, -- #D7C8BC  secondary
+    textFaint    = { 0.671, 0.608, 0.553 }, -- #AB9B8D  hints, disabled
 
     rowOdd       = { 0, 0, 0, 0.10 },       -- alternating list stripe
     rowEven      = { 0, 0, 0, 0.20 },
     rowHover     = { 1, 1, 1, 0.07 },
 
     -- The "not currently a control" fill: a disabled button, an inactive tab.
-    -- Black at an alpha rather than a darker blue, so it recedes into whatever
-    -- point of the gradient it happens to sit on instead of reading as a
-    -- differently-coloured control.
     controlOff   = { 0, 0, 0, 0.22 },
 
-    -- Two tiers of state, and which is which is a rule rather than a taste:
-    --
-    --   `on`     a SETTING's state - checked, selected, the primary action.
-    --            Blue, because these are the controls themselves and a coral
-    --            control on a blue panel reads as belonging to another addon.
-    --   `accent` where the cursor or keyboard is RIGHT NOW - a focused edit box,
-    --            the frame picker's outline. Coral, and rare enough to stay loud.
-    --
-    -- Before this, both jobs were coral, so a ticked checkbox and a focused field
-    -- shouted equally hard and the panel had no quiet resting state.
-    --
-    -- `on` is deliberately LIGHTER than every other blue here. It has to read as
-    -- lit against the control fill it sits on (#253E59) and against both ends of
-    -- the canvas gradient, and the only axis left for that is brightness.
-    on           = { 0.427, 0.639, 0.847 }, -- #6DA3D8  checked, selected, primary
-    onDim        = { 0.290, 0.478, 0.667 }, -- #4A7AAA  pressed
+    -- The one hue. State, focus and the primary action are all this.
+    accent       = { 0.878, 0.529, 0.227 }, -- #E0873A  orange
+    accentDim    = { 0.583, 0.376, 0.197 }, -- #956032  pressed accent
+    accentPale   = { 0.951, 0.706, 0.495 }, -- #F3B47E
 
-    accent       = { 0.851, 0.467, 0.341 }, -- #D97757  coral
-    accentDim    = { 0.612, 0.325, 0.231 }, -- #9C533B  pressed accent
     good         = { 0.400, 0.780, 0.541 }, -- #66C78A  success
     bad          = { 0.898, 0.451, 0.451 }, -- #E57373  error
 }
 
--- Kept as aliases so the palette swap did not have to be a call-site migration
--- as well. `surface` was doing two contradictory jobs in the old palette - it
--- was both the button base and the edit-box inset - which is why raised and
--- recessed looked identical and nothing read as clickable.
+-- A ticked checkbox is the accent.
+S.color.check = S.color.accent
+
+-- Two tiers of state used to exist (blue `on`, coral `accent`). There is one
+-- hue now; the old names stay so call sites keep working.
+S.color.on    = S.color.accent
+S.color.onDim = S.color.accentDim
+
+-- Kept as aliases so the palette swap did not have to be a call-site migration.
 S.color.surface      = S.color.control
 S.color.surfaceHover = S.color.controlHover
+
+-- The window's three-stop ground (the fall is not linear). S.Window draws the
+-- gradient between canvasTop and canvasBottom; canvasMid is the palette's
+-- middle stop, kept for reference and for anything that needs a flat ground.
+S.color.canvasTop    = { 0.089, 0.073, 0.060 } -- #17130F
+S.color.canvasMid    = { 0.059, 0.046, 0.035 } -- #0F0C09
+S.color.canvasBottom = { 0.048, 0.037, 0.027 } -- #0C0907
+
+-- Surfaces that sit ON the canvas.
+S.color.band         = { 0.074, 0.060, 0.048 } -- #130F0C  title band, footer
+S.color.rail         = { 0.074, 0.058, 0.044 } -- #130F0B
+S.color.railText     = { 0.469, 0.376, 0.296 } -- #78604B
+S.color.card         = { 0.097, 0.079, 0.064 } -- #191410  a card on the canvas
+S.color.cardRaised   = { 0.116, 0.097, 0.080 } -- #1D1914  a card on a card
+S.color.cardLift     = { 1, 1, 1, 0.03 }       -- white at 3%
+
+-- The divider ramp. Four steps, dimmest to brightest: a rule between rows, a
+-- panel edge, a control edge, and the edge of something focused or selected.
+S.color.rule         = { 0.172, 0.143, 0.119 } -- #2C251E
+S.color.edge         = { 0.187, 0.159, 0.134 } -- #302922
+S.color.edgeBright   = { 0.225, 0.190, 0.160 } -- #393029
+S.color.steel        = { 0.277, 0.236, 0.201 } -- #473C33  control borders
+S.color.steelBright  = { 0.293, 0.252, 0.217 } -- #4B4037  hover / focus
+
+-- Destructive: its own dot, edge and label intensities.
+S.color.danger       = { 0.769, 0.282, 0.353 } -- #C4485A  the dot
+S.color.dangerEdge   = { 0.420, 0.200, 0.251 } -- #6B3340  the border
+S.color.dangerText   = { 0.878, 0.541, 0.588 } -- #E08A96  the label
+S.color.warn         = { 0.851, 0.627, 0.306 } -- #D9A04E
+
+-- Neutrals for a switch's OFF state: a surface, not text alphas.
+S.color.neutral600   = { 0.490, 0.463, 0.440 } -- #7D7670  the off knob
+S.color.neutral700   = { 0.394, 0.363, 0.335 } -- #645C56  the off track
+
+-- The ON knob: a pale tint of the accent rather than white.
+S.color.knob         = { 0.981, 0.782, 0.609 } -- #FAC79B
+
+-- The window's outer edge: the only thing separating it from the game UI.
+S.color.windowEdge   = { 0.295, 0.260, 0.230 } -- #4B423B
+
+-- The title band, its own small gradient sitting on the window's.
+S.color.headerTop    = { 0.114, 0.103, 0.094 } -- #1D1A18
+S.color.headerBottom = { 0.097, 0.081, 0.068 } -- #191511
 
 -- ---------------------------------------------------------------------
 -- Spacing scale
@@ -199,26 +207,81 @@ end
 -- NOTE: CreateFont names are GLOBAL. They must not collide with
 -- SimpleLootCouncil's, which is why every one here is prefixed with this addon's
 -- name - and why that file's fonts are prefixed with its own.
-local FONT = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
+local FONT_DIR = "Interface\\AddOns\\CastQueueOverlay\\fonts\\"
+local FALLBACK = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
+local CLIENT_LOCALE = type(GetLocale) == "function" and GetLocale() or "enUS"
+local CLIENT_FONT_ONLY = CLIENT_LOCALE == "koKR" or CLIENT_LOCALE == "zhCN"
+    or CLIENT_LOCALE == "zhTW"
 
-local function MakeFont(name, fontSize, color, flags)
+-- URW Gothic (Demi) for all text, as in SimpleLootCouncil: Latin, Cyrillic and
+-- Greek. Licence: fonts/LICENSE-URW.txt. One cut, so weight cannot carry
+-- hierarchy; size and colour do. Caps has +.14em tracking baked into the file,
+-- since SetFont has no tracking argument.
+local FONT_REGULAR  = FONT_DIR .. "URWGothic-Demi.ttf"
+local FONT_TABULAR  = FONT_DIR .. "URWGothic-DemiTabular.ttf"
+local FONT_CAPS     = FONT_DIR .. "URWGothic-DemiCaps.ttf"
+
+-- Never probed: the client loads a font file in the background, so a first
+-- SetFont on it returns false and a probe would send every font to Friz. The
+-- client's own face is used only where URW Gothic has no glyphs (Korean and
+-- Chinese clients).
+local fontsLoaded = not CLIENT_FONT_ONLY
+S.fontsLoaded = fontsLoaded
+
+local function MakeFallbackFont(name, path, fontSize, color, flags)
     local f = CreateFont(name)
-    f:SetFont(FONT, fontSize, flags or "")
+    local clientFont = path == FONT_CAPS
+        and (UNIT_NAME_FONT or FALLBACK) or FALLBACK
+    f:SetFont(fontsLoaded and path or clientFont, fontSize, flags or "")
     f:SetTextColor(Unpack(color))
-    -- A one-pixel black shadow, unlike Blizzard's offset-2 gold one, and unlike
-    -- the old flat no-shadow rule here. On a gradient canvas the same text
-    -- crosses light and dark ground, and unshadowed white loses its edges
-    -- against the lighter band at the top.
-    f:SetShadowColor(0, 0, 0, 0.75)
-    f:SetShadowOffset(1, -1)
+    -- No shadow: all type sits on a flat dark panel.
+    f:SetShadowColor(0, 0, 0, 0)
+    f:SetShadowOffset(0, 0)
     return f
 end
 
-S.fontTitle   = MakeFont("CastQueueOverlayFontTitle",   15, S.color.text)
-S.fontHeading = MakeFont("CastQueueOverlayFontHeading", 11, S.color.textMuted)
-S.fontBody    = MakeFont("CastQueueOverlayFontBody",    12, S.color.text)
-S.fontSmall   = MakeFont("CastQueueOverlayFontSmall",   11, S.color.textMuted)
-S.fontHint    = MakeFont("CastQueueOverlayFontHint",    11, S.color.textFaint)
+-- Blizzard's own faces for the alphabets URW Gothic does not cover, as its
+-- FontFamily definitions in Blizzard_Fonts_Shared/Mainline/Fonts.xml name them.
+local ALPHABET_FONTS = {
+    korean             = "Fonts\\2002.TTF",
+    simplifiedchinese  = "Fonts\\ARKai_T.ttf",
+    traditionalchinese = "Fonts\\blei00d.TTF",
+}
+
+-- A font FAMILY: CreateFont + SetFont fills only the roman member, so an EditBox
+-- draws Cyrillic as boxes. Ours for roman/russian, Blizzard's otherwise.
+local function MakeFont(name, path, fontSize, color, flags)
+    if type(CreateFontFamily) ~= "function" then
+        return MakeFallbackFont(name, path, fontSize, color, flags)
+    end
+    flags = flags or ""
+    local ours = fontsLoaded
+    local members = {
+        { alphabet = "roman", file = ours and path or FALLBACK,
+          height = fontSize, flags = flags },
+        { alphabet = "russian", file = ours and path or "Fonts\\FRIZQT___CYR.TTF",
+          height = fontSize, flags = flags },
+    }
+    for alphabet, file in pairs(ALPHABET_FONTS) do
+        members[#members + 1] = { alphabet = alphabet, file = file,
+            height = fontSize, flags = flags }
+    end
+    local ok, f = pcall(CreateFontFamily, name, members)
+    if not ok or not f then
+        return MakeFallbackFont(name, path, fontSize, color, flags)
+    end
+    f:SetTextColor(Unpack(color))
+    f:SetShadowColor(0, 0, 0, 0)
+    f:SetShadowOffset(0, 0)
+    return f
+end
+
+S.fontTitle   = MakeFont("CastQueueOverlayFontTitle",   FONT_REGULAR, 16,   S.color.text)
+S.fontHeading = MakeFont("CastQueueOverlayFontHeading", FONT_CAPS,    11,   S.color.textFaint)
+S.fontBody    = MakeFont("CastQueueOverlayFontBody",    FONT_REGULAR, 12,   S.color.text)
+S.fontSmall   = MakeFont("CastQueueOverlayFontSmall",   FONT_REGULAR, 11,   S.color.textMuted)
+S.fontHint    = MakeFont("CastQueueOverlayFontHint",    FONT_REGULAR, 11,   S.color.textFaint)
+S.fontNum     = MakeFont("CastQueueOverlayFontNum",     FONT_TABULAR, 12,   S.color.text)
 
 -- Every FontString in this addon's UI goes through here. A FontString wraps by
 -- default, and a cell one pixel too narrow becomes three lines inside a
@@ -371,7 +434,7 @@ function S.Border(frame, color, layer, thickness)
     local function edge(p1, p2, horizontal)
         local t = ring:CreateTexture(nil, layer or "BORDER")
         t:SetColorTexture(Unpack(color))
-        P.Crisp(t)
+        P.Edge(t)
         t:SetPoint(p1)
         t:SetPoint(p2)
         t.cqoHorizontal = horizontal
@@ -553,7 +616,7 @@ end
 --   opts.width     override; defaults to size.BTN_W
 --   opts.height    override; defaults to size.BTN_H
 --   opts.compact   a button living inside a row (size.BTN_H_SM)
---   opts.primary   the coral accent, for the one action a window is FOR
+--   opts.primary   the accent edge and ink, for the one action a window is FOR
 --   opts.glyph     "close" draws the X instead of setting text
 --   opts.font      override font object
 --
@@ -585,26 +648,29 @@ function S.Button(parent, text, opts)
 
     P.Size(b, w, h)
 
-    -- `primary` is the blue "on" tone, not the coral accent. Apply and Done are
-    -- the action a window is FOR, which is a state of the panel, not a focus
-    -- marker - and a coral button was the one thing on screen that did not look
-    -- like it came with the rest of the addon.
-    local base  = opts.primary and S.color.on or S.color.control
-    local hover = opts.primary and S.color.onDim or S.color.controlHover
-    local down  = opts.primary and S.color.onDim or S.color.controlDown
+    -- Outline buttons, as in SimpleLootCouncil: the variant is the EDGE hue and the
+    -- fill is only a hover surface (white alphas). `primary` is the action a
+    -- window is FOR: accent edge and ink. Hover brightens the edge, never the ink.
+    local edge, ink, brightEdge
+    if opts.primary then
+        edge, ink, brightEdge = S.color.accent, S.color.accent, S.color.knob
+    else
+        edge, ink, brightEdge = S.color.steel, S.color.text, S.color.steelBright
+    end
+
+    local base  = { 1, 1, 1, 0.00 }
+    local hover = { 1, 1, 1, 0.06 }
+    local down  = { 0, 0, 0, 0.20 }
 
     local bg = b:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints(b)
     bg:SetColorTexture(Unpack(base))
     P.Crisp(bg)
 
-    -- SQUARE, with a one-pixel white border - four snapped edges, not the
-    -- nine-sliced ring. Buttons are objects on a rounded surface, and keeping
-    -- them square is what makes the window read as the container.
-    --
-    -- White on primary and plain alike. "Which of these is a button" should not
-    -- be a question the fill alone has to answer.
-    local border = S.Border(b, S.color.controlBorder)
+    -- SQUARE, with a one-pixel border - four snapped edges, not the nine-sliced
+    -- ring. Buttons are objects on a rounded surface, and keeping them square is
+    -- what makes the window read as the container.
+    local border = S.Border(b, edge)
 
     -- Bounded on both sides. A label anchored only at CENTER is free to grow
     -- straight out through the button's own edges - silently, with no error and
@@ -641,7 +707,7 @@ function S.Button(parent, text, opts)
         label:SetTextColor(Unpack(colour))
         if glyph then glyph:SetColor(colour) end
     end
-    setInk(opts.primary and S.color.canvas or S.color.text)
+    setInk(ink)
 
     local enabled = true
 
@@ -652,13 +718,13 @@ function S.Button(parent, text, opts)
     b:SetScript("OnEnter", function(self)
         if not enabled then return end
         paint(hover)
-        border:SetColor(S.color.controlBorderHover)
+        border:SetColor(brightEdge)
         if self.cqoHoverIn then self.cqoHoverIn(self) end
     end)
     b:SetScript("OnLeave", function(self)
         if not enabled then return end
         paint(base)
-        border:SetColor(S.color.controlBorder)
+        border:SetColor(edge)
         if self.cqoHoverOut then self.cqoHoverOut(self) end
     end)
     b:SetScript("OnMouseDown", function()
@@ -681,11 +747,11 @@ function S.Button(parent, text, opts)
         enabled = on and true or false
         if enabled then
             paint(base)
-            setInk(opts.primary and S.color.canvas or S.color.text)
-            border:SetColor(S.color.controlBorder)
+            setInk(ink)
+            border:SetColor(edge)
             b:EnableMouse(true)
         else
-            bg:SetColorTexture(Unpack(S.color.controlOff))
+            bg:SetColorTexture(Unpack(base))
             setInk(S.color.textFaint)
             -- Dropped to the panel hairline. A disabled control keeping the
             -- white edge would still read as the brightest thing in the row.
@@ -789,7 +855,7 @@ function S.Checkbox(parent, boxSize, onToggle)
     return b
 end
 
--- Horizontal slider: recessed groove with a coral thumb. Built from our own
+-- Horizontal slider: recessed groove with an accent thumb. Built from our own
 -- textures rather than OptionsSliderTemplate, which brings Blizzard's metal
 -- trough and gold-bordered thumb.
 --
@@ -821,7 +887,7 @@ function S.Slider(parent, width, height)
     P.Crisp(thumb)
     s:SetThumbTexture(thumb)
 
-    -- The travelled part of the groove, in the same "on" blue as the thumb. An
+    -- The travelled part of the groove, in the same accent as the thumb. An
     -- unfilled groove makes a slider read as a decoration with a knob on it; the
     -- fill is what says "this is a value, and it is this far along".
     --
@@ -888,7 +954,7 @@ function S.Heading(parent, x, width, y, text)
 
     local rule = f:CreateTexture(nil, "ARTWORK")
     rule:SetColorTexture(Unpack(S.color.border))
-    P.Crisp(rule)
+    P.Edge(rule)
     rule:SetPoint("LEFT", fs, "RIGHT", Snap(size.GAP), 0)
     rule:SetPoint("RIGHT", f, "RIGHT", 0, 0)
     local function ruleThickness() rule:SetHeight(P.Hairline()) end
@@ -922,10 +988,9 @@ function S.Tab(parent, text, width, height)
 
     local border = S.Border(b, S.color.border)
 
-    -- The active marker: a rule along the bottom edge, in the "on" blue. Which
+    -- The active marker: a rule along the bottom edge, in the accent. Which
     -- tab you are on is a selection, the same class of state as a ticked box, so
-    -- it takes the same colour - not the coral, which is reserved for where the
-    -- keyboard or cursor is right now.
+    -- it takes the same colour.
     local marker = b:CreateTexture(nil, "OVERLAY")
     marker:SetColorTexture(Unpack(S.color.on))
     P.Crisp(marker)
@@ -1002,17 +1067,29 @@ function S.Window(globalName, key, width, height, title)
     f:Hide()
 
     local _, windowMask = S.GradientFill(f, S.color.canvasTop, S.color.canvasBottom, 0.96)
-    S.RoundBorder(f, S.color.border, "OVERLAY")
+    -- The window's edge ring is its own frame above the title band, the close
+    -- button and the content, as in SimpleLootCouncil: the bands are child
+    -- frames and would paint over a ring on the window itself. windowEdge, not
+    -- the internal hairline, because it is the only thing separating the window
+    -- from the game UI behind it.
+    local edge = CreateFrame("Frame", nil, f)
+    edge:EnableMouse(false)
+    edge:SetAllPoints()
+    edge:SetFrameLevel(f:GetFrameLevel() + 4)
+    S.RoundBorder(edge, S.color.windowEdge, "OVERLAY")
+    f.Edge = edge
 
-    -- The title band. A subtle white wash plus a hairline rule beneath it, which
-    -- is enough to separate chrome from content without spending a second colour
-    -- on it.
+    -- The title band: its own small gradient (headerTop to headerBottom) plus a
+    -- hairline rule beneath it.
     local header = CreateFrame("Frame", nil, f)
     header:SetFrameLevel(f:GetFrameLevel() + 1)
     header:SetPoint("TOPLEFT")
     header:SetPoint("TOPRIGHT")
     P.Size(header, nil, size.HEADER_H)
-    local headerFill = S.Fill(header, { 1, 1, 1, 0.05 })
+    local headerFill = S.Fill(header, { 1, 1, 1, 1 })
+    headerFill:SetGradient("VERTICAL",
+        CreateColor(S.color.headerBottom[1], S.color.headerBottom[2], S.color.headerBottom[3], 1),
+        CreateColor(S.color.headerTop[1], S.color.headerTop[2], S.color.headerTop[3], 1))
     -- Clipped by the WINDOW's corners, not its own. The header spans the top of
     -- the window, so masking it against itself would round its bottom corners
     -- (wrong) while leaving its top ones to poke out past the window's (also
@@ -1023,7 +1100,7 @@ function S.Window(globalName, key, width, height, title)
 
     local headerRule = header:CreateTexture(nil, "ARTWORK")
     headerRule:SetColorTexture(Unpack(S.color.border))
-    P.Crisp(headerRule)
+    P.Edge(headerRule)
     headerRule:SetPoint("BOTTOMLEFT")
     headerRule:SetPoint("BOTTOMRIGHT")
     local function ruleThickness() headerRule:SetHeight(P.Hairline()) end
@@ -1088,6 +1165,7 @@ function S.Window(globalName, key, width, height, title)
     grip:SetScript("OnDragStart", function() f:StartMoving() end)
     grip:SetScript("OnDragStop", function()
         f:StopMovingOrSizing()
+        P.AlignFrame(f)
         -- Store point/relative/offsets rather than GetRect, so the saved
         -- position survives a UI scale change.
         local point, _, relPoint, x, y = f:GetPoint()
@@ -1106,6 +1184,7 @@ function S.Window(globalName, key, width, height, title)
         else
             f:SetPoint("CENTER")
         end
+        P.AlignFrame(f)
     end
 
     if globalName then

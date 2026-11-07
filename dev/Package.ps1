@@ -16,6 +16,7 @@
 #   * FORWARD-SLASH entry paths, written through the .NET ZipArchive API.
 #     PowerShell's Compress-Archive writes backslashes, and macOS extracts such
 #     an archive as a single file with a mangled name.
+#   * fonts\ is included for the same reason as art\: loaded by path, in no .toc.
 #   * art\ is included even though it is in no .toc. Textures are loaded on
 #     demand by path, so a zip built from the .toc alone hands someone an addon
 #     whose rounded corners silently degrade to square.
@@ -49,6 +50,12 @@ $files += Get-Content $toc | ForEach-Object {
 $artDir = Join-Path $src "art"
 if (Test-Path $artDir) {
     $files += @(Get-ChildItem $artDir -File | ForEach-Object { "art\$($_.Name)" })
+}
+
+# Fonts are referenced by path from the style file, never listed in a .toc.
+$fontDir = Join-Path $src "fonts"
+if (Test-Path $fontDir) {
+    $files += @(Get-ChildItem $fontDir -File | ForEach-Object { "fonts\$($_.Name)" })
 }
 
 # Everything else is excluded, matching .pkgmeta's ignore list - so this zip is a

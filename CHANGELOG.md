@@ -3,7 +3,8 @@
 ## 2.3.0
 
 - The options window has been redesigned, and now matches Simple Loot Council: a
-  blue gradient panel with rounded corners, flat controls and hairline borders.
+  dark panel with rounded corners, flat controls, hairline borders and an orange
+  accent, set in the URW Gothic font.
 - The window remembers where you drag it, and so does the colour picker.
 - Each overlay tab now shows its enable toggle, colour and current value as
   separate rows, with the whole row clickable rather than just the checkbox.
