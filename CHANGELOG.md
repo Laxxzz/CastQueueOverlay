@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.3.1
+
+- The options window now uses Simple Loot Council's current colours, with a
+  single orange accent for everything that is on, ticked or selected.
+- The URW Gothic font is now included with the addon. 2.3.0 fell back to the
+  game's standard font.
+- The window's edge is drawn above the title bar, so the outline no longer
+  breaks at the top.
+- The "SpellQueueWindow" tab is now called "SpellQueue".
+- The addon has its own icon in the addon list.
+
 ## 2.3.0
 
 - The options window has been redesigned, and now matches Simple Loot Council: a
