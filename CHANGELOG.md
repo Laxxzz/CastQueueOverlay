@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.2
+
+- Added an addon compartment entry: click it to open the options window (it
+  waits for the end of combat, like /cqo).
+- Loads on WoW: Forever as well as retail.
+
 ## 2.3.1
 
 - Updated for patch 12.1.5. The addon no longer shows as out of date.
