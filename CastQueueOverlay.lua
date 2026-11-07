@@ -538,3 +538,9 @@ SlashCmdList["CASTQUEUEOVERLAY"] = function()
     pendingOptions = false
     addon.ToggleOptions()
 end
+
+-- Addon compartment (minimap addon list) click: same as /cqo, including the
+-- combat deferral.
+function CastQueueOverlay_OnCompartmentClick()
+    SlashCmdList["CASTQUEUEOVERLAY"]()
+end
