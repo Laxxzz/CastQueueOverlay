@@ -1,4 +1,4 @@
-## Interface: 120100
+## Interface: 120105
 ## Title: Cast Queue Overlay
 ## Notes: Adds coloured overlays to the end of your cast bar for spell queue window, latency and a custom value.
 ## Author: Laxx

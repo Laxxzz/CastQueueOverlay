@@ -2,6 +2,7 @@
 
 ## 2.3.1
 
+- Updated for patch 12.1.5. The addon no longer shows as out of date.
 - The options window now uses Simple Loot Council's current colours, with a
   single orange accent for everything that is on, ticked or selected.
 - The URW Gothic font is now included with the addon. 2.3.0 fell back to the
