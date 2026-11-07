@@ -54,7 +54,7 @@ local channelToggleRow, channelSliderRow
 
 local TAB_KEYS = { "queue", "latency", "custom" }
 local TAB_TEXT = {
-    queue   = "SpellQueueWindow",
+    queue   = "SpellQueue",
     latency = "Latency",
     custom  = "Custom",
 }
