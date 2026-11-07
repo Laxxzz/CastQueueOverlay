@@ -1,0 +1,8 @@
+{
+  "branch": "main",
+  "addonsDirs": ["{retail}"],
+  "checks": [
+    { "name": "Test-WowAddon -StrictMethods", "run": ["{ref}\\scripts\\Test-WowAddon.ps1", "{repo}", "-StrictMethods"] },
+    { "name": "UI test", "run": ["{luajit}", "dev/test_ui.lua", "."] }
+  ]
+}
