@@ -1,18 +1,9 @@
-# Controls what the BigWigsMods packager puts in the built zip.
-#
-# Without this, the packager would ship the whole repository - README, licence,
-# screenshots, workflow files - inside the addon folder. The zip should contain
-# only what the client actually loads, matching the hand-built artifacts for
-# 2.0.0 and 2.1.0.
+# What a deployed or packaged CastQueueOverlay leaves out. The live deploy honours
+# this ignore list; the release zip is built by dev/Package.ps1 from the .toc, art/
+# and fonts/, and agrees with it. There is no BigWigs packager or CI release any more:
+# dev/Publish.ps1 publishes, with the "## <version>" section of CHANGELOG.md as the
+# notes on every channel.
 package-as: CastQueueOverlay
-
-# Use the hand-written changelog for both the GitHub release and the CurseForge
-# upload. Without this the packager generates notes from the commit messages
-# since the previous tag, which are written for maintainers and read as noise to
-# players. One file, one wording, both platforms.
-manual-changelog:
-  filename: CHANGELOG.md
-  markup-type: markdown
 
 ignore:
   - .github

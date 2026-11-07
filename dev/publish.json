@@ -1,0 +1,18 @@
+{
+  "githubRepo": "Laxxzz/CastQueueOverlay",
+  "targets": ["mirror", "github", "curse"],
+  "mirror": {
+    "url": "https://github.com/Laxxzz/CastQueueOverlay.git",
+    "branch": "main"
+  },
+  "baseBranch": "main",
+  "packager": "dev/Package.ps1",
+  "requiredEntries": [
+    "CastQueueOverlay.lua",
+    "CastQueueOverlayLayout.lua",
+    "CastQueueOverlayOptions.lua",
+    "CastQueueOverlayPixel.lua",
+    "CastQueueOverlayStyle.lua"
+  ],
+  "forbiddenEntries": ["dev/", "docs/", "media/", "\\.claude/", "CLAUDE\\.md$", "AGENTS\\.md$", "README\\.md$"]
+}

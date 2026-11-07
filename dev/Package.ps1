@@ -1,10 +1,9 @@
 # Builds a distributable zip of the addon.
 #
-# This is a LOCAL PREVIEW of what the CI release produces. Real releases go out
-# through .github/workflows/release.yml on an annotated tag push, which runs
-# BigWigsMods/packager and uploads to CurseForge - this script does not publish
-# anything. Use it to check what a release would contain before tagging one, or
-# to hand a build to a tester.
+# This is also the release build: dev/Publish.ps1 (the shared Publish-WowAddon.ps1)
+# calls it with -Release and uploads the zip it makes to every channel. On its own
+# it publishes nothing - use it to check what a release would contain, or to hand a
+# build to a tester. There is no CI release: tags trigger nothing.
 #
 # Three things it gets deliberately right, each of which has broken an addon zip
 # before:
@@ -27,7 +26,9 @@
 param(
     [string]$OutDir = (Split-Path -Parent $PSScriptRoot),
     # Keep zips for older versions instead of removing them.
-    [switch]$KeepOld
+    [switch]$KeepOld,
+    # Passed by the shared publisher. A release zip is this same zip, so it changes nothing.
+    [switch]$Release
 )
 
 $ErrorActionPreference = "Stop"
@@ -58,9 +59,9 @@ if (Test-Path $fontDir) {
     $files += @(Get-ChildItem $fontDir -File | ForEach-Object { "fonts\$($_.Name)" })
 }
 
-# Everything else is excluded, matching .pkgmeta's ignore list - so this zip is a
-# faithful preview of the CurseForge build rather than a second opinion about
-# what ships. README, LICENSE and CHANGELOG live on the project page there.
+# Everything else is excluded, matching .pkgmeta's ignore list (which the live
+# deploy honours), so the zip and a deployed install carry the same files. README,
+# LICENSE and CHANGELOG live on the project pages instead.
 
 Add-Type -AssemblyName System.IO.Compression | Out-Null
 Add-Type -AssemblyName System.IO.Compression.FileSystem | Out-Null
@@ -113,5 +114,6 @@ Write-Host ""
 Write-Host "Built $zip  ($size KB)" -ForegroundColor Green
 Write-Host "Contains $written file(s). Extract into Interface\AddOns." -ForegroundColor Cyan
 Write-Host ""
-Write-Host "This does NOT publish. To release:" -ForegroundColor DarkGray
-Write-Host "  git tag -a v$version -m `"v$version`" && git push origin v$version" -ForegroundColor DarkGray
+if (-not $Release) {
+    Write-Host "This does NOT publish. To release (with the user's go-ahead): dev\Publish.ps1" -ForegroundColor DarkGray
+}
