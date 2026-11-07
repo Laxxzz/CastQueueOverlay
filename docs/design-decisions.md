@@ -124,25 +124,24 @@ comments (`decision #18`); never renumber.
     any size. Fonts are custom `CreateFont` objects — the `GameFont*` globals carry Blizzard's
     gold and shadowing. Palette lives in one table in `CastQueueOverlayStyle.lua` with hex
     values in comments; add colours there, not inline.
-    - The palette (since 2026-08-25) is SimpleLootCouncil's — a blue gradient canvas, raised
-      blue controls, black-at-alpha insets, white-at-alpha neutrals, one coral accent — so the
-      two addons read as one suite. The retired warm near-black "editor" look shared only the
-      accent.
-    - Fonts carry a **1px black shadow**: on a gradient canvas the same text crosses light and
-      dark ground, and unshadowed white loses its edges against the lighter band.
+    - The palette is SimpleLootCouncil's current one (since 2026-11-07), hue-rotated to this
+      addon's orange #E0873A: a flat near-black canvas with a slight warm cast, raised
+      controls, black-at-alpha insets, white-at-alpha neutrals, ONE accent. The window's ground
+      still falls from `canvasTop` to `canvasBottom`. The earlier blue-gradient / coral look
+      is retired.
+    - Fonts are URW Gothic (`fonts/`, licence `LICENSE-URW.txt`) with **no shadow**, as in SLC:
+      all type sits on a flat dark panel. They are font FAMILIES (`CreateFontFamily`) so an
+      EditBox draws Cyrillic and CJK.
     - Borders are no longer literally 1px — see decision #18.
     - **`CreateFont` names are GLOBAL.** This addon's and SimpleLootCouncil's must not collide;
       both prefix every font object with their own addon name. Two addons creating
       `MyFontBody` silently share one object.
 
-12b. **Two tiers of state colour: blue for a setting, coral for focus.** `S.color.on`
-    (#6DA3D8) marks what a SETTING is: a ticked checkbox, the filled part of a slider and its
-    thumb, the active tab's underline, and the primary button. `S.color.accent` (coral) marks
-    where the cursor or keyboard is RIGHT NOW: a focused edit box's border, the frame picker's
-    outline and the name it reports. (Both were coral at first: no quiet resting state, and a
-    coral Apply button on a blue window looked foreign.)
-    - `on` is deliberately the LIGHTEST blue in the palette — it must read as lit against the
-      control fill and both ends of the canvas gradient, and brightness is the only axis left.
+12b. **One accent for state.** `S.color.accent` (#E0873A) marks a ticked checkbox, the filled
+    part of a slider and its thumb, the active tab's underline, a focused edit box's border,
+    the frame picker's outline, and the primary button's edge and ink. The old `on`/`onDim`
+    names survive as aliases of `accent`/`accentDim` so call sites kept working. Primary
+    buttons are SLC's outline treatment: accent edge and ink, a faint white wash on hover.
     - The slider's fill anchors to the THUMB's centre rather than being computed from the
       value, so it tracks what the engine did with the thumb, including the half-thumb inset
       at each end (a fraction-derived width is wrong at exactly the two positions checked

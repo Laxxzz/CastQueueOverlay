@@ -100,13 +100,10 @@ function P.Snap(x, frame)
     if type(x) ~= "number" or x == 0 then return x end
 
     local step = frame and P.OnePixel(frame) or mult
-    if step == 1 then
-        return math.floor(x + 0.5)
-    end
     if step <= 0 then return x end
 
-    step = step > 0 and step or -step
-    return x - x % (x < 0 and step or -step)
+    local pixels = math.floor(math.abs(x) / step + 0.5)
+    return x < 0 and -pixels * step or pixels * step
 end
 
 -- ---------------------------------------------------------------------
@@ -161,6 +158,85 @@ function P.Crisp(tex)
     return tex
 end
 
+-- A one-pixel line: Crisp, plus the engine's own pixel snapping while a window is
+-- scaled, since our grid only holds at a scale of 1. Tracked weakly so the mode
+-- can be flipped for every line at once. `forced` is a debugging override.
+local edges = setmetatable({}, { __mode = "k" })
+local edgeSnap, edgeForced = false, nil
+
+local function ApplyEdgeSnap(on)
+    if on == edgeSnap then return end
+    edgeSnap = on
+    for tex in pairs(edges) do
+        tex:SetSnapToPixelGrid(on)
+        tex:SetTexelSnappingBias(0)
+    end
+end
+
+function P.Edge(tex)
+    P.Crisp(tex)
+    edges[tex] = true
+    if edgeSnap then tex:SetSnapToPixelGrid(true) end
+    return tex
+end
+
+-- nil hands the choice back to the scale.
+function P.SetEdgeSnap(on)
+    if on == nil then edgeForced = nil return end
+    edgeForced = on and true or false
+    ApplyEdgeSnap(edgeForced)
+end
+
+function P.AutoEdgeSnap(on)
+    if edgeForced == nil then ApplyEdgeSnap(on and true or false) end
+end
+
+-- ---------------------------------------------------------------------
+-- Window alignment
+-- ---------------------------------------------------------------------
+
+-- A window's edge sits this fraction of a pixel past the grid, so a child half a
+-- pixel off always rounds the same way wherever the window is dragged to.
+P.WINDOW_BIAS = 1 / 64
+
+-- The window edge nearest `pixels` (a position counted in physical pixels).
+function P.GridPixel(pixels)
+    return math.floor(pixels - P.WINDOW_BIAS + 0.5) + P.WINDOW_BIAS
+end
+
+-- Align a UIParent child by its real screen edges (odd widths, post-drag offsets).
+function P.AlignFrame(frame)
+    local point, relativeTo, relativePoint, x, y = frame:GetPoint()
+    if Secret(point) or Secret(relativeTo) or Secret(relativePoint) then return end
+    if not point or (relativeTo and relativeTo ~= UIParent) then return end
+    if type(x) ~= "number" or type(y) ~= "number" or Secret(x) or Secret(y) then return end
+
+    local physW, physH = GetPhysicalScreenSize()
+    if type(physW) ~= "number" or type(physH) ~= "number"
+        or Secret(physW) or Secret(physH) or physW <= 0 or physH <= 0 then return end
+
+    local width, height = frame:GetWidth(), frame:GetHeight()
+    if type(width) ~= "number" or type(height) ~= "number"
+        or Secret(width) or Secret(height) or width <= 0 or height <= 0 then return end
+
+    local step = P.OnePixel(frame)
+    local function position(part, extent)
+        if part:find("LEFT", 1, true) or part:find("BOTTOM", 1, true) then return 0 end
+        if part:find("RIGHT", 1, true) or part:find("TOP", 1, true) then return extent end
+        return extent * 0.5
+    end
+    local relative = relativePoint or point
+    local left = position(relative:match("LEFT") or relative:match("RIGHT") or "CENTER", physW)
+        + x / step - position(point:match("LEFT") or point:match("RIGHT") or "CENTER", width / step)
+    local bottom = position(relative:match("BOTTOM") or relative:match("TOP") or "CENTER", physH)
+        + y / step - position(point:match("BOTTOM") or point:match("TOP") or "CENTER", height / step)
+    local dx = (P.GridPixel(left) - left) * step
+    local dy = (P.GridPixel(bottom) - bottom) * step
+    if math.abs(dx) > step * 0.0001 or math.abs(dy) > step * 0.0001 then
+        frame:SetPoint(point, relativeTo or UIParent, relative, x + dx, y + dy)
+    end
+end
+
 -- ---------------------------------------------------------------------
 -- Re-snapping when the ground moves
 -- ---------------------------------------------------------------------
@@ -184,6 +260,9 @@ local function Rescale()
         if fn then pcall(fn) end
     end
 end
+
+-- A window's scale changed: every border and rule measures itself again.
+P.Resnap = Rescale
 
 -- ---------------------------------------------------------------------
 -- Deferred measurement
