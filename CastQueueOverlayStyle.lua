@@ -1067,7 +1067,17 @@ function S.Window(globalName, key, width, height, title)
     f:Hide()
 
     local _, windowMask = S.GradientFill(f, S.color.canvasTop, S.color.canvasBottom, 0.96)
-    S.RoundBorder(f, S.color.border, "OVERLAY")
+    -- The window's edge ring is its own frame above the title band, the close
+    -- button and the content, as in SimpleLootCouncil: the bands are child
+    -- frames and would paint over a ring on the window itself. windowEdge, not
+    -- the internal hairline, because it is the only thing separating the window
+    -- from the game UI behind it.
+    local edge = CreateFrame("Frame", nil, f)
+    edge:EnableMouse(false)
+    edge:SetAllPoints()
+    edge:SetFrameLevel(f:GetFrameLevel() + 4)
+    S.RoundBorder(edge, S.color.windowEdge, "OVERLAY")
+    f.Edge = edge
 
     -- The title band: its own small gradient (headerTop to headerBottom) plus a
     -- hairline rule beneath it.
