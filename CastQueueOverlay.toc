@@ -2,7 +2,7 @@
 ## Title: Cast Queue Overlay
 ## Notes: Adds coloured overlays to the end of your cast bar for spell queue window, latency and a custom value.
 ## Author: Laxx
-## Version: 2.3.1
+## Version: 2.3.2
 ## IconTexture: Interface\AddOns\CastQueueOverlay\art\Icon
 ## AddonCompartmentFunc: CastQueueOverlay_OnCompartmentClick
 ## SavedVariables: CastQueueOverlayDB
